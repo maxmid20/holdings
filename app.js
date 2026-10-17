@@ -41,9 +41,18 @@
       kind,
       category: String((raw && raw.category) || 'Other').trim().slice(0, 60) || 'Other',
       value: Number.isFinite(value) && value >= 0 ? Math.min(value, 1e12) : 0,
+      accountType: String((raw && raw.accountType) || '').trim().slice(0, 80),
+      fund: String((raw && raw.fund) || '').trim().slice(0, 120),
+      owner: String((raw && raw.owner) || '').trim().slice(0, 80),
       note: String((raw && raw.note) || '').trim().slice(0, 300)
     };
   }
+
+  // Suggestions offered in the Account type / Owner inputs (you can still type anything).
+  const ACCOUNT_TYPES = ['401(k)', 'Roth 401(k)', '403(b)', '457(b)', 'Traditional IRA', 'Roth IRA', 'SEP IRA', 'HSA', '529 plan',
+    'Taxable brokerage', 'Checking', 'Savings', 'High-yield savings', 'CD', 'Money market', 'Pension', 'Crypto wallet',
+    'Primary residence', 'Rental property', 'Mortgage', 'HELOC', 'Credit card', 'Auto loan', 'Student loan'];
+  const OWNERS = ['Myself', 'Partner', 'Joint'];
 
   // ---------- Crypto (Web Crypto: PBKDF2-SHA256 → AES-256-GCM) ----------
   const te = new TextEncoder(), td = new TextDecoder();
@@ -129,10 +138,14 @@
     id: r.id,
     ...clean({
       name: r.fields.Name, kind: /^debt$/i.test(String(r.fields.Kind || '')) ? 'debt' : 'asset',
-      category: r.fields.Category, value: r.fields.Value, note: r.fields.Note
+      category: r.fields.Category, value: r.fields.Value, note: r.fields.Note,
+      accountType: r.fields['Account type'], fund: r.fields.Fund, owner: r.fields.Owner
     })
   });
-  const toFields = d => ({ Name: d.name, Kind: d.kind === 'debt' ? 'Debt' : 'Asset', Category: d.category, Value: d.value, Note: d.note });
+  const toFields = d => ({
+    Name: d.name, Kind: d.kind === 'debt' ? 'Debt' : 'Asset', Category: d.category, Value: d.value, Note: d.note,
+    'Account type': d.accountType, Fund: d.fund, Owner: d.owner
+  });
 
   async function atLoadAll() {
     const out = []; let offset = '';
@@ -210,15 +223,41 @@
     return [...CATS[kind].filter(c => c !== 'Other'), ...extra, 'Other'];
   }
 
+  // Owner filter (kept in memory only, so no names are written to this device)
+  let ownerView = '';
+  const ownersInUse = () => [...new Set(items.map(i => i.owner).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const visible = () => ownerView ? items.filter(i => i.owner === ownerView) : items;
+  function renderOwnerFilter() {
+    const sel = $('ownerFilter'), owners = ownersInUse();
+    if (!owners.includes(ownerView)) ownerView = '';
+    sel.textContent = '';
+    sel.hidden = mode === 'locked' || owners.length === 0;
+    if (sel.hidden) return;
+    const all = document.createElement('option'); all.value = ''; all.textContent = 'Everyone'; sel.append(all);
+    for (const o of owners) { const opt = document.createElement('option'); opt.value = o; opt.textContent = o; sel.append(opt); }
+    sel.value = ownerView;
+  }
+  $('ownerFilter').onchange = () => { ownerView = $('ownerFilter').value; render(); };
+
+  function fillDatalist(id, base, used) {
+    const dl = $(id); dl.textContent = '';
+    for (const v of [...new Set([...used, ...base])]) { const o = document.createElement('option'); o.value = v; dl.append(o); }
+  }
+
+  function metaLine(i) {
+    const bits = [i.accountType, i.fund, i.owner].filter(Boolean);
+    return bits.length ? `<div class="meta">${bits.map(b => `<span>${esc(b)}</span>`).join('')}</div>` : '';
+  }
+
   function renderList(kind) {
     const el = $(kind === 'asset' ? 'assets' : 'debts');
-    const list = items.filter(i => i.kind === kind);
+    const list = visible().filter(i => i.kind === kind);
     if (!list.length) { el.innerHTML = `<div class="empty">No ${kind}s yet.</div>`; return; }
     el.innerHTML = catsFor(kind, list).map(cat => {
       const g = list.filter(i => i.category === cat);
       if (!g.length) return '';
       return `<div class="group"><div class="group-head"><span>${esc(cat)}</span><span class="amt">${esc(fmt(sum(g)))}</span></div>` +
-        g.map(i => `<div class="row"><div><div class="name">${esc(i.name)}</div>${i.note ? `<div class="note">${esc(i.note)}</div>` : ''}</div>` +
+        g.map(i => `<div class="row"><div><div class="name">${esc(i.name)}</div>${metaLine(i)}${i.note ? `<div class="note">${esc(i.note)}</div>` : ''}</div>` +
           `<div class="amt">${esc(fmt(i.value))}</div><button class="icon-btn" type="button" data-edit="${esc(i.id)}" aria-label="Edit ${esc(i.name)}">✎</button></div>`).join('') +
         `</div>`;
     }).join('');
@@ -226,7 +265,7 @@
 
   function renderMix() {
     const el = $('assetMix'); el.textContent = '';
-    const assets = items.filter(i => i.kind === 'asset'), total = sum(assets);
+    const assets = visible().filter(i => i.kind === 'asset'), total = sum(assets);
     if (!total) return;
     const parts = catsFor('asset', assets).map((c, ix) => ({ c, v: sum(assets.filter(a => a.category === c)), col: COLORS[ix % COLORS.length] })).filter(p => p.v > 0);
     const bar = document.createElement('div'); bar.className = 'bar';
@@ -254,12 +293,16 @@
     $('foot').textContent = mode === 'local'
       ? 'Your data is stored only in this browser. Connect Airtable to sync it across devices, or use Export to back it up.'
       : 'Your data is stored in Airtable. Your token is encrypted on this device, and the app locks after 15 minutes of inactivity.';
+    renderOwnerFilter();
     if (locked) {
+      ownerView = '';
       ['totAssets', 'totDebts', 'totNet'].forEach(id => { $(id).textContent = '—'; });
-      ['assets', 'debts', 'assetMix', 'fName', 'fNote', 'fVal'].forEach(id => { const el = $(id); if ('value' in el && el.tagName === 'INPUT') el.value = ''; else el.textContent = ''; });
+      ['assets', 'debts', 'assetMix', 'fName', 'fNote', 'fVal', 'fAcct', 'fFund', 'fOwner', 'acctList', 'ownerList', 'fundList']
+        .forEach(id => { const el = $(id); if (el.tagName === 'INPUT') el.value = ''; else el.textContent = ''; });
       return;
     }
-    const a = sum(items.filter(i => i.kind === 'asset')), d = sum(items.filter(i => i.kind === 'debt'));
+    const vis = visible();
+    const a = sum(vis.filter(i => i.kind === 'asset')), d = sum(vis.filter(i => i.kind === 'debt'));
     $('totAssets').textContent = fmt(a);
     $('totDebts').textContent = fmt(d);
     $('totNet').textContent = fmt(a - d);
@@ -283,6 +326,12 @@
     sel.value = item ? item.category : CATS[kind][0];
     $('fVal').value = item ? item.value : '';
     $('fNote').value = item ? item.note : '';
+    $('fAcct').value = item ? item.accountType : '';
+    $('fFund').value = item ? item.fund : '';
+    $('fOwner').value = item ? item.owner : (ownerView || '');
+    fillDatalist('acctList', ACCOUNT_TYPES, items.map(i => i.accountType).filter(Boolean));
+    fillDatalist('ownerList', OWNERS, ownersInUse());
+    fillDatalist('fundList', [], items.map(i => i.fund).filter(Boolean));
     $('itemDel').hidden = !item;
     $('itemErr').textContent = '';
     $('itemDlg').showModal();
@@ -292,7 +341,10 @@
     if (!$('fName').value.trim()) { $('itemErr').textContent = 'Please enter a name.'; return; }
     const v = Number($('fVal').value);
     if ($('fVal').value === '' || !Number.isFinite(v) || v < 0) { $('itemErr').textContent = 'Please enter a value of 0 or more.'; return; }
-    const d = clean({ name: $('fName').value, kind: editKind, category: $('fCat').value, value: v, note: $('fNote').value });
+    const d = clean({
+      name: $('fName').value, kind: editKind, category: $('fCat').value, value: v, note: $('fNote').value,
+      accountType: $('fAcct').value, fund: $('fFund').value, owner: $('fOwner').value
+    });
     try {
       await busy($('itemSave'), () => editingId ? updateItem(editingId, d) : addItem(d));
       $('itemDlg').close(); render();

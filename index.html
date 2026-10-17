@@ -15,6 +15,7 @@
     <h1>◆ <span>Holdings</span></h1>
     <div class="tools">
       <button class="btn" id="connBtn" type="button"><span class="dot" id="connDot"></span><span id="connLabel">Connect Airtable</span></button>
+      <select id="ownerFilter" class="btn" aria-label="Show holdings for" hidden></select>
       <select id="currency" class="btn" aria-label="Currency"></select>
       <button class="btn" id="exportBtn" type="button">Export</button>
       <button class="btn" id="importBtn" type="button">Import</button>
@@ -58,7 +59,13 @@
     <div class="field"><label for="fName">Name</label><input id="fName" maxlength="120" required placeholder="e.g. Checking account" autocomplete="off"></div>
     <div class="field"><label for="fCat">Category</label><select id="fCat"></select></div>
     <div class="field"><label for="fVal">Value</label><input id="fVal" type="number" step="0.01" min="0" max="1000000000000" required inputmode="decimal"></div>
+    <div class="field-row">
+      <div class="field"><label for="fAcct">Account type</label><input id="fAcct" maxlength="80" list="acctList" placeholder="e.g. 401(k)" autocomplete="off"></div>
+      <div class="field"><label for="fOwner">Owner</label><input id="fOwner" maxlength="80" list="ownerList" placeholder="e.g. Myself" autocomplete="off"></div>
+    </div>
+    <div class="field"><label for="fFund">Fund / holding</label><input id="fFund" maxlength="120" list="fundList" placeholder="e.g. Vanguard Target Retirement 2060" autocomplete="off"></div>
     <div class="field"><label for="fNote">Note (optional)</label><input id="fNote" maxlength="300" placeholder="Institution, address…" autocomplete="off"></div>
+    <datalist id="acctList"></datalist><datalist id="ownerList"></datalist><datalist id="fundList"></datalist>
     <p class="form-err" id="itemErr"></p>
     <div class="actions">
       <button type="button" class="btn danger" id="itemDel" hidden>Delete</button>

@@ -21,6 +21,9 @@ Create a new base, for example "Holdings", with one table named **`Items`** and 
 | `Category` | Single line text                       |
 | `Value`    | Number (2 decimal places)              |
 | `Note`     | Long text                              |
+| `Account type` | Single line text (e.g. 401(k), Roth IRA, Checking) |
+| `Fund`     | Single line text (e.g. Vanguard Target Retirement 2060) |
+| `Owner`    | Single line text (e.g. Myself, Partner, Joint) |
 
 Copy the **base ID** from the base's URL. It's the part that starts with `app`, as in `airtable.com/appXXXXXXXXXXXXXX/...`.
 

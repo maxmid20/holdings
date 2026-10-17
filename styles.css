@@ -69,6 +69,9 @@ dialog .sub{color:var(--muted);font-size:13px;margin:0 0 14px}
 .field{display:flex;flex-direction:column;gap:4px;margin-bottom:12px}
 .field label{font-size:13px;color:var(--muted)}
 .field input,.field select{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;width:100%}
+.field-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.row .meta{color:var(--muted);font-size:13px;overflow-wrap:anywhere}
+.row .meta span + span::before{content:" · "}
 .check{display:flex;gap:8px;align-items:flex-start;font-size:14px;margin-bottom:12px}
 .steps{font-size:13px;color:var(--muted);padding-left:18px;margin:0 0 14px}
 .steps li{margin-bottom:4px}
