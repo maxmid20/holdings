@@ -3,78 +3,26 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://api.airtable.com; form-action 'none'; base-uri 'none'; object-src 'none'">
+<meta name="referrer" content="no-referrer">
 <title>Holdings</title>
-<style>
-:root{
-  --bg:#f6f5f1;--surface:#ffffff;--surface-2:#efede7;--text:#1c1b19;--muted:#6b6862;
-  --line:#e2dfd7;--accent:#2f5d50;--accent-ink:#ffffff;--pos:#2f6d3a;--neg:#a63d2f;
-  --radius:12px;
-}
-@media (prefers-color-scheme: dark){
-  :root:not([data-theme="light"]){
-    --bg:#141413;--surface:#1d1c1a;--surface-2:#262522;--text:#ecebe6;--muted:#9a978f;
-    --line:#33312d;--accent:#7fb3a1;--accent-ink:#0f1a16;--pos:#7cc28a;--neg:#e58a7c;
-  }
-}
-:root[data-theme="dark"]{
-  --bg:#141413;--surface:#1d1c1a;--surface-2:#262522;--text:#ecebe6;--muted:#9a978f;
-  --line:#33312d;--accent:#7fb3a1;--accent-ink:#0f1a16;--pos:#7cc28a;--neg:#e58a7c;
-}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
-.wrap{max-width:960px;margin:0 auto;padding:24px 16px 64px}
-header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:20px}
-h1{font-size:20px;margin:0;letter-spacing:-.01em}
-h1 span{color:var(--accent)}
-.tools{display:flex;gap:8px;flex-wrap:wrap}
-button,select,input{font:inherit;color:inherit}
-.btn{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:7px 12px;cursor:pointer}
-.btn:hover{background:var(--surface-2)}
-.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
-.summary{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:24px}
-.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:16px}
-.card .label{color:var(--muted);font-size:13px}
-.card .value{font-size:24px;font-weight:600;font-variant-numeric:tabular-nums;margin-top:4px;overflow-wrap:anywhere}
-.card.net .value{color:var(--accent)}
-.section{margin-bottom:28px}
-.section-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
-.section-head h2{font-size:16px;margin:0}
-.group{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);margin-bottom:10px;overflow:hidden}
-.group-head{display:flex;justify-content:space-between;padding:10px 14px;background:var(--surface-2);font-weight:600;font-size:14px}
-.row{display:grid;grid-template-columns:1fr auto auto;gap:12px;align-items:center;padding:10px 14px;border-top:1px solid var(--line)}
-.row:first-of-type{border-top:0}
-.row .name{overflow-wrap:anywhere}
-.row .note{color:var(--muted);font-size:13px}
-.amt{font-variant-numeric:tabular-nums;white-space:nowrap}
-.icon-btn{background:none;border:0;color:var(--muted);cursor:pointer;padding:4px 6px;border-radius:6px}
-.icon-btn:hover{background:var(--surface-2);color:var(--text)}
-.empty{color:var(--muted);padding:18px;text-align:center;border:1px dashed var(--line);border-radius:var(--radius)}
-.bar{display:flex;height:10px;border-radius:5px;overflow:hidden;background:var(--surface-2);margin-top:10px}
-.bar div{height:100%}
-.legend{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px;font-size:12px;color:var(--muted)}
-.legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px;vertical-align:middle}
-dialog{border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);color:var(--text);padding:20px;width:min(420px,calc(100vw - 32px))}
-dialog::backdrop{background:rgba(0,0,0,.4)}
-dialog h3{margin:0 0 14px}
-.field{display:flex;flex-direction:column;gap:4px;margin-bottom:12px}
-.field label{font-size:13px;color:var(--muted)}
-.field input,.field select{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
-.actions{display:flex;justify-content:flex-end;gap:8px;margin-top:6px}
-.foot{color:var(--muted);font-size:12px;margin-top:30px}
-@media (max-width:640px){.summary{grid-template-columns:1fr}.card .value{font-size:22px}}
-</style>
+<link rel="stylesheet" href="styles.css">
+<script src="app.js" defer></script>
 </head>
 <body>
 <div class="wrap">
   <header>
     <h1>◆ <span>Holdings</span></h1>
     <div class="tools">
+      <button class="btn" id="connBtn" type="button"><span class="dot" id="connDot"></span><span id="connLabel">Connect Airtable</span></button>
       <select id="currency" class="btn" aria-label="Currency"></select>
-      <button class="btn" id="exportBtn">Export</button>
-      <button class="btn" id="importBtn">Import</button>
-      <input type="file" id="importFile" accept="application/json" hidden>
+      <button class="btn" id="exportBtn" type="button">Export</button>
+      <button class="btn" id="importBtn" type="button">Import</button>
+      <input type="file" id="importFile" accept="application/json,.json" hidden>
     </div>
   </header>
+
+  <div id="banner" class="banner" role="status" hidden><span id="bannerText"></span><button type="button" id="bannerClose" aria-label="Dismiss">✕</button></div>
 
   <div class="summary">
     <div class="card"><div class="label">Assets</div><div class="value" id="totAssets">—</div></div>
@@ -82,141 +30,95 @@ dialog h3{margin:0 0 14px}
     <div class="card net"><div class="label">Net worth</div><div class="value" id="totNet">—</div></div>
   </div>
 
-  <div class="section">
-    <div class="section-head"><h2>Assets</h2><button class="btn primary" data-add="asset">+ Add asset</button></div>
-    <div id="assetMix"></div>
-    <div id="assets"></div>
+  <div class="card lock-card" id="lockCard" hidden>
+    <h2>🔒 Locked</h2>
+    <p>Your data is stored in Airtable. Enter your passphrase to unlock it on this device.</p>
+    <button class="btn primary" type="button" id="lockUnlockBtn">Unlock</button>
   </div>
 
-  <div class="section">
-    <div class="section-head"><h2>Debts</h2><button class="btn primary" data-add="debt">+ Add debt</button></div>
-    <div id="debts"></div>
+  <div id="content">
+    <div class="section">
+      <div class="section-head"><h2>Assets</h2><button class="btn primary" type="button" data-add="asset">+ Add asset</button></div>
+      <div id="assetMix"></div>
+      <div id="assets"></div>
+    </div>
+    <div class="section">
+      <div class="section-head"><h2>Debts</h2><button class="btn primary" type="button" data-add="debt">+ Add debt</button></div>
+      <div id="debts"></div>
+    </div>
   </div>
 
-  <p class="foot">Your data is stored only in this browser. Use Export to back it up or move it to another device.</p>
+  <p class="foot" id="foot"></p>
 </div>
 
-<dialog id="dlg">
-  <form method="dialog" id="form">
-    <h3 id="dlgTitle">Add item</h3>
-    <div class="field"><label for="fName">Name</label><input id="fName" required placeholder="e.g. Checking account"></div>
+<!-- Add / edit item -->
+<dialog id="itemDlg">
+  <form id="itemForm" novalidate>
+    <h3 id="itemTitle">Add item</h3>
+    <div class="field"><label for="fName">Name</label><input id="fName" maxlength="120" required placeholder="e.g. Checking account" autocomplete="off"></div>
     <div class="field"><label for="fCat">Category</label><select id="fCat"></select></div>
-    <div class="field"><label for="fVal">Value</label><input id="fVal" type="number" step="0.01" min="0" required></div>
-    <div class="field"><label for="fNote">Note (optional)</label><input id="fNote" placeholder="Bank, address, account ending…"></div>
+    <div class="field"><label for="fVal">Value</label><input id="fVal" type="number" step="0.01" min="0" max="1000000000000" required inputmode="decimal"></div>
+    <div class="field"><label for="fNote">Note (optional)</label><input id="fNote" maxlength="300" placeholder="Institution, address…" autocomplete="off"></div>
+    <p class="form-err" id="itemErr"></p>
     <div class="actions">
-      <button type="button" class="btn" id="delBtn" hidden>Delete</button>
-      <button type="button" class="btn" id="cancelBtn">Cancel</button>
-      <button type="submit" class="btn primary">Save</button>
+      <button type="button" class="btn danger" id="itemDel" hidden>Delete</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn" data-close>Cancel</button>
+      <button type="submit" class="btn primary" id="itemSave">Save</button>
     </div>
   </form>
 </dialog>
 
-<script>
-const KEY = 'holdings.v1';
-const CATS = {
-  asset: ['Cash','Investments','Retirement','Real estate','Vehicles','Crypto','Collectibles','Other'],
-  debt:  ['Mortgage','Auto loan','Student loan','Credit card','Personal loan','Other']
-};
-const COLORS = ['#2f5d50','#c8963e','#5b7fa6','#a65b7f','#6e9c4f','#8a6fbf','#c46a4a','#7a7a7a'];
-const CURRENCIES = ['USD','EUR','GBP','CAD','AUD','JPY','CHF','INR'];
+<!-- Connect Airtable -->
+<dialog id="connectDlg">
+  <form id="connectForm" novalidate>
+    <h3>Connect Airtable</h3>
+    <p class="sub">Your token is encrypted on this device with your passphrase. It is never saved in the code or sent anywhere except Airtable.</p>
+    <ol class="steps">
+      <li>Create a base with a table named <code>Items</code> (fields listed in the README).</li>
+      <li>Create a <a href="https://airtable.com/create/tokens" target="_blank" rel="noopener noreferrer">personal access token</a> with only <code>data.records:read</code> and <code>data.records:write</code>, and give it access to <strong>that one base</strong>.</li>
+      <li>Copy the base ID (starts with <code>app</code>) from the base's URL.</li>
+    </ol>
+    <div class="field"><label for="cBase">Base ID</label><input id="cBase" placeholder="appXXXXXXXXXXXXXX" autocomplete="off" spellcheck="false" maxlength="17"></div>
+    <div class="field"><label for="cTable">Table name</label><input id="cTable" value="Items" autocomplete="off" spellcheck="false" maxlength="60"></div>
+    <div class="field"><label for="cToken">Personal access token</label><input id="cToken" type="password" placeholder="pat…" autocomplete="off" spellcheck="false" maxlength="200"></div>
+    <div class="field"><label for="cPass">Create a passphrase (12+ characters)</label><input id="cPass" type="password" autocomplete="new-password" maxlength="200"></div>
+    <div class="field"><label for="cPass2">Confirm passphrase</label><input id="cPass2" type="password" autocomplete="new-password" maxlength="200"></div>
+    <label class="check" id="cUploadRow" hidden><input type="checkbox" id="cUpload" checked> <span>Move my <strong id="cUploadN">0</strong> items from this browser into Airtable, then remove them from this browser.</span></label>
+    <p class="form-err" id="connectErr"></p>
+    <div class="actions">
+      <button type="button" class="btn" data-close>Cancel</button>
+      <button type="submit" class="btn primary" id="connectSave">Test &amp; connect</button>
+    </div>
+  </form>
+</dialog>
 
-let state = load();
+<!-- Unlock -->
+<dialog id="unlockDlg">
+  <form id="unlockForm" novalidate>
+    <h3>Unlock Holdings</h3>
+    <p class="sub">Enter the passphrase you set when you connected Airtable on this device.</p>
+    <div class="field"><label for="uPass">Passphrase</label><input id="uPass" type="password" autocomplete="current-password" maxlength="200"></div>
+    <p class="form-err" id="unlockErr"></p>
+    <div class="actions">
+      <button type="button" class="btn danger" id="forgetBtn">Forgot it? Disconnect</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn" data-close>Cancel</button>
+      <button type="submit" class="btn primary" id="unlockSave">Unlock</button>
+    </div>
+  </form>
+</dialog>
 
-function load(){
-  try { const s = JSON.parse(localStorage.getItem(KEY)); if (s && Array.isArray(s.items)) return s; } catch(e){}
-  return { currency:'USD', items:[] };
-}
-function save(){ try { localStorage.setItem(KEY, JSON.stringify(state)); } catch(e){} }
-function fmt(n){ return new Intl.NumberFormat(undefined,{style:'currency',currency:state.currency,maximumFractionDigits:0}).format(n); }
-function esc(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-const sum = list => list.reduce((a,i)=>a+Number(i.value||0),0);
-
-function renderList(kind){
-  const el = document.getElementById(kind==='asset'?'assets':'debts');
-  const items = state.items.filter(i=>i.kind===kind);
-  if(!items.length){ el.innerHTML = `<div class="empty">No ${kind}s yet.</div>`; return; }
-  el.innerHTML = CATS[kind].map(cat=>{
-    const g = items.filter(i=>i.category===cat);
-    if(!g.length) return '';
-    return `<div class="group"><div class="group-head"><span>${cat}</span><span class="amt">${fmt(sum(g))}</span></div>
-      ${g.map(i=>`<div class="row"><div><div class="name">${esc(i.name)}</div>${i.note?`<div class="note">${esc(i.note)}</div>`:''}</div>
-        <div class="amt">${fmt(i.value)}</div><button class="icon-btn" data-edit="${i.id}" aria-label="Edit">✎</button></div>`).join('')}</div>`;
-  }).join('');
-}
-
-function renderMix(){
-  const el = document.getElementById('assetMix');
-  const assets = state.items.filter(i=>i.kind==='asset'), total = sum(assets);
-  if(!total){ el.innerHTML=''; return; }
-  const parts = CATS.asset.map((c,ix)=>({c,v:sum(assets.filter(a=>a.category===c)),col:COLORS[ix]})).filter(p=>p.v>0);
-  el.innerHTML = `<div class="bar">${parts.map(p=>`<div style="width:${p.v/total*100}%;background:${p.col}" title="${p.c}"></div>`).join('')}</div>
-    <div class="legend" style="margin-bottom:12px">${parts.map(p=>`<span><i style="background:${p.col}"></i>${p.c} ${Math.round(p.v/total*100)}%</span>`).join('')}</div>`;
-}
-
-function render(){
-  const a = sum(state.items.filter(i=>i.kind==='asset')), d = sum(state.items.filter(i=>i.kind==='debt'));
-  document.getElementById('totAssets').textContent = fmt(a);
-  document.getElementById('totDebts').textContent = fmt(d);
-  document.getElementById('totNet').textContent = fmt(a-d);
-  renderMix(); renderList('asset'); renderList('debt');
-}
-
-// Dialog
-const dlg = document.getElementById('dlg'), form = document.getElementById('form');
-let editing = null, editKind = 'asset';
-function openDlg(kind, item){
-  editKind = kind; editing = item || null;
-  document.getElementById('dlgTitle').textContent = (item?'Edit ':'Add ') + kind;
-  document.getElementById('fCat').innerHTML = CATS[kind].map(c=>`<option>${c}</option>`).join('');
-  document.getElementById('fName').value = item?.name || '';
-  document.getElementById('fCat').value = item?.category || CATS[kind][0];
-  document.getElementById('fVal').value = item?.value ?? '';
-  document.getElementById('fNote').value = item?.note || '';
-  document.getElementById('delBtn').hidden = !item;
-  dlg.showModal();
-}
-form.addEventListener('submit', e=>{
-  const data = { name:fName.value.trim(), category:fCat.value, value:Number(fVal.value)||0, note:fNote.value.trim(), kind:editKind, updated:Date.now() };
-  if(editing) Object.assign(editing, data);
-  else state.items.push({ id:crypto.randomUUID ? crypto.randomUUID() : String(Date.now()+Math.random()), ...data });
-  save(); render();
-});
-document.getElementById('cancelBtn').onclick = ()=>dlg.close();
-document.getElementById('delBtn').onclick = ()=>{
-  if(editing && confirm(`Delete “${editing.name}”?`)){ state.items = state.items.filter(i=>i!==editing); save(); render(); }
-  dlg.close();
-};
-document.addEventListener('click', e=>{
-  const add = e.target.closest('[data-add]'); if(add) openDlg(add.dataset.add);
-  const ed = e.target.closest('[data-edit]'); if(ed){ const it = state.items.find(i=>i.id===ed.dataset.edit); if(it) openDlg(it.kind,it); }
-});
-
-// Currency
-const cur = document.getElementById('currency');
-cur.innerHTML = CURRENCIES.map(c=>`<option>${c}</option>`).join('');
-cur.value = state.currency;
-cur.onchange = ()=>{ state.currency = cur.value; save(); render(); };
-
-// Export / import
-document.getElementById('exportBtn').onclick = ()=>{
-  const blob = new Blob([JSON.stringify(state,null,2)],{type:'application/json'});
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `holdings-${new Date().toISOString().slice(0,10)}.json`;
-  a.click(); URL.revokeObjectURL(a.href);
-};
-document.getElementById('importBtn').onclick = ()=>document.getElementById('importFile').click();
-document.getElementById('importFile').onchange = async e=>{
-  const f = e.target.files[0]; if(!f) return;
-  try{
-    const s = JSON.parse(await f.text());
-    if(!Array.isArray(s.items)) throw 0;
-    if(confirm('Replace your current data with this file?')){ state = s; cur.value = state.currency||'USD'; save(); render(); }
-  }catch(err){ alert('That file isn’t a valid Holdings export.'); }
-  e.target.value='';
-};
-
-render();
-</script>
+<!-- Connection menu -->
+<dialog id="connMenu">
+  <h3>Airtable connected</h3>
+  <p class="sub" id="connInfo"></p>
+  <div class="actions">
+    <button type="button" class="btn danger" id="disconnectBtn">Disconnect this device</button>
+    <span class="spacer"></span>
+    <button type="button" class="btn" data-close>Close</button>
+    <button type="button" class="btn primary" id="lockNowBtn">Lock now</button>
+  </div>
+</dialog>
 </body>
 </html>
