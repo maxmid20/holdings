@@ -29,7 +29,7 @@ Create a new base, for example "Holdings", with one table named **`Items`** and 
 | `Price`, `Priced on` | Number / text, written by the daily sync |
 | `Expected return %` | Number (2 dp, negatives allowed), optional. For a debt, this is its interest rate |
 | `Monthly contribution` | Number (2 dp), optional. For a debt, this is its monthly payment |
-| `Currency` | Single line text, optional. A currency code: USD, AUD, EUR, GBP, CAD, NZD, JPY, CHF, SGD, HKD or INR. Blank means USD. `Value` and `Monthly contribution` are in this currency |
+| `Currency` | Single line text, optional. A currency code: USD, AUD, EUR, GBP, CAD, NZD, JPY, CHF, SGD, HKD, INR, or BTC for bitcoin held directly (Value = the number of coins, e.g. 0.25). Blank means USD. `Value` and `Monthly contribution` are in this currency |
 | `Asset class` | Single line text, optional. One of: US stocks, International stocks, Equities, US bonds, International bonds, Bonds, Cash, Property, Gold, Commodities, Bitcoin, Crypto, Other. Set by **Tidy up** or the Bucket picker |
 
 ## Currencies
@@ -42,10 +42,11 @@ Rates live in a small **FX rates** table, one row per currency:
 |---|---|
 | `Currency` | Single line text (primary field), e.g. `AUD` |
 | `Per USD` | Number (6 decimal places): how many of that currency 1 US dollar buys, e.g. 1.53 |
+| `USD each` | Number (2 decimal places): used for bitcoin instead of `Per USD`, the dollar price of 1 BTC, e.g. 82644.65 |
 | `As of` | Single line text, e.g. 2026-10-17 |
-| `Source` | Single line text: `Auto (ECB via Frankfurter)` from the daily sync, or `Manual` for a rate you typed |
+| `Source` | `Auto (…)` from the daily sync, or `Manual` for a rate you typed |
 
-The daily sync refreshes the rates every weekday from the European Central Bank (through the free Frankfurter service). You can also set or override a rate under **Exchange rates** (below the totals). A manual rate is kept until you choose "Use the daily rate instead". Until a currency has a rate, its holdings are left out of the totals and the app says so. In browser-only mode, rates you type are kept in this browser.
+The daily sync refreshes the rates every weekday: currencies from the European Central Bank (through the free Frankfurter service), and bitcoin from Alpha Vantage (falling back to CoinGecko). You can also set or override a rate under **Exchange rates** (below the totals). A manual rate is kept until you choose "Use the daily rate instead". Until a currency has a rate, its holdings are left out of the totals and the app says so. In browser-only mode, rates you type are kept in this browser.
 
 ## Buckets
 

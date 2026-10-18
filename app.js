@@ -17,7 +17,9 @@
     debt: ['Mortgage', 'Auto loan', 'Student loan', 'Credit card', 'Personal loan', 'Other']
   };
   const COLORS = ['#2f5d50', '#c8963e', '#5b7fa6', '#a65b7f', '#6e9c4f', '#8a6fbf', '#c46a4a', '#7a7a7a'];
-  const CURRENCIES = ['USD', 'AUD', 'EUR', 'GBP', 'CAD', 'NZD', 'JPY', 'CHF', 'SGD', 'HKD', 'INR'];
+  const CURRENCIES = ['USD', 'AUD', 'EUR', 'GBP', 'CAD', 'NZD', 'JPY', 'CHF', 'SGD', 'HKD', 'INR', 'BTC'];
+  const DISPLAY_CURRENCIES = CURRENCIES.filter(c => c !== 'BTC');   // totals are shown in a regular currency
+  const PRICED = ['BTC'];                    // rates entered as "1 BTC = $X" rather than "1 USD = X"
   const BASE_CUR = 'USD';                    // a holding with no Currency is in US dollars; rates are per 1 USD
   const curOf = c => { const x = String(c || '').trim().toUpperCase(); return CURRENCIES.includes(x) ? x : BASE_CUR; };
 
@@ -108,7 +110,7 @@
   // ---------- State ----------
   const oldLocal = parse(store.get(LOCAL_KEY));
   let prefs = parse(store.get(PREF_KEY)) || { currency: (oldLocal && oldLocal.currency) || 'USD' };
-  if (!CURRENCIES.includes(prefs.currency)) prefs.currency = 'USD';
+  if (!DISPLAY_CURRENCIES.includes(prefs.currency)) prefs.currency = 'USD';
   let mode = parse(store.get(VAULT_KEY)) ? 'locked' : 'local'; // 'local' | 'locked' | 'airtable'
   let session = null; // { token, baseId, table } — kept in memory only while unlocked
   let items = mode === 'local' ? loadLocalItems() : [];
@@ -243,6 +245,7 @@
   const FX_TABLE = 'FX rates';
   let fx = {}, fxTableOk = false;
   const fxOk = r => Number.isFinite(r) && r > 0 && r < 1e7;
+  const round = (n, d) => Math.round(n * 10 ** d) / 10 ** d;
   const rateOf = c => { c = curOf(c); return c === BASE_CUR ? 1 : (fx[c] && fxOk(fx[c].rate) ? fx[c].rate : null); };
   const dispCur = () => rateOf(prefs.currency) ? prefs.currency : BASE_CUR;
   const conv = (v, c) => { const from = rateOf(c), to = rateOf(dispCur()); return from && to && v !== null && v !== undefined ? Number(v) / from * to : null; };
@@ -256,7 +259,8 @@
     const out = {};
     const j = await at(`${session.baseId}/${encodeURIComponent(FX_TABLE)}?pageSize=100`);
     for (const r of j.records || []) {
-      const f = r.fields || {}, c = String(f.Currency || '').trim().toUpperCase(), rate = Number(f['Per USD']);
+      const f = r.fields || {}, c = String(f.Currency || '').trim().toUpperCase(), each = Number(f['USD each']);
+      const rate = Number(f['Per USD']) > 0 ? Number(f['Per USD']) : (each > 0 ? 1 / each : NaN);
       if (!CURRENCIES.includes(c) || c === BASE_CUR || !fxOk(rate) || !REC_RE.test(r.id)) continue;
       const src = String(f.Source || '').slice(0, 60), isManual = /^manual/i.test(src);
       if (out[c] && out[c].source === 'Manual' && !isManual) continue;   // a manual row beats an automatic one
@@ -272,7 +276,9 @@
       savePrefs(); fx = localFx(); return;
     }
     for (let k = 0; k < changes.length; k += 10) {
-      const records = changes.slice(k, k + 10).map(ch => ({ fields: { Currency: ch.code, 'Per USD': ch.rate, 'As of': today, Source: ch.source } }));
+      const records = changes.slice(k, k + 10).map(ch => ({ fields: PRICED.includes(ch.code)
+        ? { Currency: ch.code, 'USD each': round(1 / ch.rate, 2), 'Per USD': null, 'As of': today, Source: ch.source }
+        : { Currency: ch.code, 'Per USD': ch.rate, 'As of': today, Source: ch.source } }));
       await at(`${session.baseId}/${encodeURIComponent(FX_TABLE)}`, { method: 'PATCH', body: { performUpsert: { fieldsToMergeOn: ['Currency'] }, records, typecast: true } });
     }
     fx = await atLoadFx(); fxTableOk = true;
@@ -337,7 +343,9 @@
   });
 
   // ---------- Rendering ----------
-  const fmtIn = (n, c) => new Intl.NumberFormat(undefined, { style: 'currency', currency: c, maximumFractionDigits: 0 }).format(n);
+  const fmtIn = (n, c) => c === 'BTC'
+    ? '₿' + new Intl.NumberFormat(undefined, { maximumFractionDigits: 8 }).format(n)
+    : new Intl.NumberFormat(undefined, { style: 'currency', currency: c, maximumFractionDigits: 0 }).format(n);
   const fmt = n => fmtIn(n, dispCur());
 
   function showBanner(text, kind = 'err') {
@@ -880,9 +888,12 @@
 
   // ---------- Currency ----------
   const cur = $('currency');
-  for (const c of CURRENCIES) { const o = document.createElement('option'); o.textContent = c; cur.append(o); $('fCur').append(o.cloneNode(true)); }
+  for (const c of CURRENCIES) {
+    const o = document.createElement('option'); o.value = c; o.textContent = c === 'BTC' ? 'BTC (bitcoin)' : c; $('fCur').append(o);
+    if (DISPLAY_CURRENCIES.includes(c)) { const d = document.createElement('option'); d.textContent = c; cur.append(d); }
+  }
   cur.value = prefs.currency;
-  cur.onchange = () => { if (CURRENCIES.includes(cur.value)) { prefs.currency = cur.value; savePrefs(); render(); } };
+  cur.onchange = () => { if (DISPLAY_CURRENCIES.includes(cur.value)) { prefs.currency = cur.value; savePrefs(); render(); } };
 
   // Currencies that need a rate: those your holdings use, plus the display currency.
   const fxNeeded = () => [...new Set([...items.map(i => i.currency), prefs.currency])].filter(c => c !== BASE_CUR).sort((a, b) => CURRENCIES.indexOf(a) - CURRENCIES.indexOf(b));
@@ -899,7 +910,7 @@
       if (!rateOf(prefs.currency)) bits.push(`showing ${BASE_CUR} instead of ${prefs.currency}`);
       $('fxText').textContent = bits.join(': ') + '.';
     } else {
-      const pairs = need.map(c => `1 ${BASE_CUR} = ${fmtRate(rateOf(c))} ${c}`).join(' · ');
+      const pairs = need.map(c => PRICED.includes(c) ? `1 ${c} = ${fmtIn(1 / rateOf(c), BASE_CUR)}` : `1 ${BASE_CUR} = ${fmtRate(rateOf(c))} ${c}`).join(' · ');
       const dates = need.map(c => fx[c] && fx[c].asOf).filter(Boolean).sort();
       $('fxText').textContent = `Converted to ${dispCur()} at ${pairs}${dates.length ? ` (as of ${dates[0]})` : ''}.`;
     }
@@ -912,12 +923,13 @@
     fxRows = fxNeeded().map(code => {
       const e = fx[code];
       const row = document.createElement('div'); row.className = 'fx-row';
-      const lab = document.createElement('label'); lab.htmlFor = 'fx-' + code; lab.textContent = `1 ${BASE_CUR} =`;
+      const priced = PRICED.includes(code);   // bitcoin: "1 BTC = $X" reads better than "1 USD = 0.0000121 BTC"
+      const lab = document.createElement('label'); lab.htmlFor = 'fx-' + code; lab.textContent = priced ? `1 ${code} =` : `1 ${BASE_CUR} =`;
       const inp = document.createElement('input'); inp.id = 'fx-' + code; inp.type = 'number'; inp.step = 'any'; inp.min = '0'; inp.inputMode = 'decimal';
-      inp.value = e ? String(e.rate) : ''; inp.placeholder = 'e.g. ' + ({ AUD: '1.55', EUR: '0.92', GBP: '0.78', CAD: '1.38', NZD: '1.70', JPY: '150' }[code] || '1.00');
-      const unit = document.createElement('span'); unit.textContent = code;
+      inp.value = e ? String(priced ? round(1 / e.rate, 2) : e.rate) : ''; inp.placeholder = 'e.g. ' + ({ AUD: '1.55', EUR: '0.92', GBP: '0.78', CAD: '1.38', NZD: '1.70', JPY: '150', BTC: '80000' }[code] || '1.00');
+      const unit = document.createElement('span'); unit.textContent = priced ? BASE_CUR : code;
       const meta = document.createElement('div'); meta.className = 'fx-meta' + (e ? '' : ' warn'); meta.textContent = srcLabel(e);
-      const r = { code, inp, start: inp.value, reset: false };
+      const r = { code, inp, start: inp.value, reset: false, priced };
       if (e && e.source === 'Manual' && mode === 'airtable') {
         const b = document.createElement('button'); b.type = 'button'; b.className = 'link-btn'; b.textContent = 'Use the daily rate instead';
         b.onclick = () => { r.reset = true; meta.textContent = 'Will switch back to the daily rate at the next sync'; b.remove(); };
@@ -937,10 +949,11 @@
     const changes = [];
     for (const r of fxRows) {
       const t = r.inp.value.trim();
-      if (r.reset && t === r.start) { changes.push({ code: r.code, rate: Number(t), source: 'Auto' }); continue; }
+      const toRate = n => r.priced ? (n > 0 ? 1 / n : NaN) : n;
+      if (r.reset && t === r.start) { changes.push({ code: r.code, rate: toRate(Number(t)), source: 'Auto' }); continue; }
       if (t === r.start) continue;
-      const n = Number(t);
-      if (!fxOk(n)) { $('fxErr').textContent = `Enter how many ${r.code} one ${BASE_CUR} buys, e.g. 1.55.`; r.inp.focus(); return; }
+      const n = toRate(Number(t));
+      if (!fxOk(n)) { $('fxErr').textContent = r.priced ? `Enter what one ${r.code} is worth in ${BASE_CUR}, e.g. 80000.` : `Enter how many ${r.code} one ${BASE_CUR} buys, e.g. 1.55.`; r.inp.focus(); return; }
       changes.push({ code: r.code, rate: n, source: 'Manual' });
     }
     if (!changes.length) { $('fxDlg').close(); return; }

@@ -6,8 +6,8 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://api.airtable.com; form-action 'none'; base-uri 'none'; object-src 'none'">
 <meta name="referrer" content="no-referrer">
 <title>Holdings</title>
-<link rel="stylesheet" href="styles.css?v=2026-10-18b">
-<script src="app.js?v=2026-10-18b" defer></script>
+<link rel="stylesheet" href="styles.css?v=2026-10-18c">
+<script src="app.js?v=2026-10-18c" defer></script>
 </head>
 <body>
 <div class="wrap">
@@ -86,7 +86,7 @@
       <div class="field" id="fClassWrap"><label for="fClass">Bucket</label><select id="fClass"></select></div>
     </div>
     <div class="field-row val-row">
-      <div class="field"><label for="fVal">Value</label><input id="fVal" type="number" step="0.01" min="0" max="1000000000000" required inputmode="decimal"></div>
+      <div class="field"><label for="fVal">Value</label><input id="fVal" type="number" step="any" min="0" max="1000000000000" required inputmode="decimal"></div>
       <div class="field"><label for="fCur">Currency</label><select id="fCur"></select></div>
     </div>
     <div class="field-row">
@@ -99,7 +99,7 @@
     </div>
     <div class="field-row">
       <div class="field"><label for="fRate" id="fRateLabel">Expected return % / yr</label><input id="fRate" type="number" step="0.1" min="-50" max="50" inputmode="decimal" placeholder="Uses default"></div>
-      <div class="field"><label for="fMonthly" id="fMonthlyLabel">Monthly contribution</label><input id="fMonthly" type="number" step="0.01" min="0" inputmode="decimal" placeholder="0"></div>
+      <div class="field"><label for="fMonthly" id="fMonthlyLabel">Monthly contribution</label><input id="fMonthly" type="number" step="any" min="0" inputmode="decimal" placeholder="0"></div>
     </div>
     <div class="field"><label for="fFund">Fund / holding</label><input id="fFund" maxlength="120" list="fundList" placeholder="e.g. Vanguard Target Retirement 2060" autocomplete="off"></div>
     <div class="field"><label for="fNote">Note (optional)</label><input id="fNote" maxlength="300" placeholder="Institution, address…" autocomplete="off"></div>
@@ -172,7 +172,7 @@
 <dialog id="fxDlg">
   <form id="fxForm" novalidate>
     <h3>Exchange rates</h3>
-    <p class="sub" id="fxSub">Holdings in other currencies are converted into your display currency with these rates. The daily sync refreshes them from the European Central Bank; a rate you type in yourself is kept until you reset it.</p>
+    <p class="sub" id="fxSub">Holdings in other currencies are converted into your display currency with these rates. The daily sync refreshes them (currencies from the European Central Bank, bitcoin from Alpha Vantage); a rate you type in yourself is kept until you reset it.</p>
     <div class="fx-list" id="fxList"></div>
     <p class="form-err" id="fxErr"></p>
     <div class="actions">
