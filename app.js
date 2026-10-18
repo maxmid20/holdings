@@ -498,6 +498,109 @@
 
   function renderMix() { $('assetMix').textContent = ''; }   // superseded by the Returns panel
 
+  // ---------- Macro exposure: by country and by currency ----------
+  // Look-through, net of debts. Each holding is split by its asset classes (fund breakdown > Asset class > category),
+  // then each class is placed in a country and a currency:
+  //  - US stocks/bonds: United States, USD.
+  //  - International stocks: the world market minus the fund's home country (approximate index weights), in those
+  //    countries' currencies (assumed unhedged). International bonds: same countries, but in the fund's own currency
+  //    (international bond funds are usually currency-hedged).
+  //  - Unspecified shares/bonds: in a US fund, the whole world market; in a non-US fund, its home market.
+  //  - Cash, property and "other": the holding's home country and currency. Gold and bitcoin are stateless: their own
+  //    "currencies" (XAU, BTC). Commodities: global, priced in USD. Debts subtract in their own country and currency.
+  const WORLD = { 'United States': 64, 'Japan': 5, 'United Kingdom': 3.5, 'Eurozone': 7.5, 'Canada': 3, 'Switzerland': 2.3,
+    'Australia': 1.8, 'China': 2.5, 'Taiwan': 2, 'India': 2, 'Other countries': 6.4 };   // ≈ global stock market weights
+  const COUNTRY_CUR = { 'United States': 'USD', 'Japan': 'JPY', 'United Kingdom': 'GBP', 'Eurozone': 'EUR', 'Canada': 'CAD',
+    'Switzerland': 'CHF', 'Australia': 'AUD', 'China': 'CNY', 'Taiwan': 'TWD', 'India': 'INR', 'Other countries': 'Other',
+    'New Zealand': 'NZD', 'Singapore': 'SGD', 'Hong Kong': 'HKD' };
+  const HOME_OF = { USD: 'United States', AUD: 'Australia', GBP: 'United Kingdom', EUR: 'Eurozone', CAD: 'Canada', NZD: 'New Zealand',
+    JPY: 'Japan', CHF: 'Switzerland', SGD: 'Singapore', HKD: 'Hong Kong', INR: 'India' };
+  const CUR_NAME = { USD: 'US dollar', AUD: 'Australian dollar', GBP: 'British pound', EUR: 'Euro', CAD: 'Canadian dollar', NZD: 'NZ dollar',
+    JPY: 'Japanese yen', CHF: 'Swiss franc', SGD: 'Singapore dollar', HKD: 'Hong Kong dollar', INR: 'Indian rupee', CNY: 'Chinese yuan',
+    TWD: 'Taiwan dollar', XAU: 'Gold', BTC: 'Bitcoin', Other: 'Other currencies' };
+  function worldExcept(home) {
+    const m = { ...WORLD }; delete m[home];
+    const t = Object.values(m).reduce((a, b) => a + b, 0);
+    return Object.fromEntries(Object.entries(m).map(([k, w]) => [k, w / t]));
+  }
+  const curMix = countries => { const out = {}; for (const [k, w] of Object.entries(countries)) { const c = COUNTRY_CUR[k] || 'Other'; out[c] = (out[c] || 0) + w; } return out; };
+  function exposures(list) {
+    const country = {}, currency = {};
+    const add = (map, k, v) => { const e = map[k] || (map[k] = { assets: 0, debts: 0 }); if (v >= 0) e.assets += v; else e.debts -= v; };
+    for (const i of list) {
+      if (!(i.value > 0)) continue;
+      const cur = i.currency, home = HOME_OF[cur] || 'Global';
+      if (i.kind === 'debt') { add(country, home, -i.value); add(currency, PRICED.includes(cur) ? cur : cur, -i.value); continue; }
+      for (const [cls, w] of Object.entries(mixFor(i))) {
+        const v = i.value * w / 100;
+        let ctry, curr;
+        if (cls === 'US stocks' || cls === 'US bonds') { ctry = { 'United States': 1 }; curr = { USD: 1 }; }
+        else if (cls === 'International stocks') { ctry = worldExcept(cur === 'USD' ? 'United States' : home); curr = curMix(ctry); }
+        else if (cls === 'International bonds') { ctry = worldExcept(cur === 'USD' ? 'United States' : home); curr = { [cur]: 1 }; }
+        else if (cls === 'Equities' || cls === 'Bonds') {
+          if (cur === 'USD' || !HOME_OF[cur]) { const wm = Object.fromEntries(Object.entries(WORLD).map(([k, x]) => [k, x / 100])); ctry = wm; curr = cls === 'Equities' ? curMix(wm) : { USD: 1 }; }
+          else { ctry = { [home]: 1 }; curr = { [cur]: 1 }; }
+        }
+        else if (cls === 'Gold') { ctry = { 'Global: gold': 1 }; curr = { XAU: 1 }; }
+        else if (cls === 'Bitcoin' || cls === 'Crypto') { ctry = { 'Global: crypto': 1 }; curr = { BTC: 1 }; }
+        else if (cls === 'Commodities') { ctry = { 'Global: commodities': 1 }; curr = { USD: 1 }; }
+        else { ctry = { [home]: 1 }; curr = { [PRICED.includes(cur) ? cur : cur]: 1 }; }   // cash, property, other
+        for (const [k, f] of Object.entries(ctry)) add(country, k, v * f);
+        for (const [k, f] of Object.entries(curr)) add(currency, k, v * f);
+      }
+    }
+    return { country, currency };
+  }
+  function drawExposure(el, map, nw, labelOf, title) {
+    el.textContent = '';
+    const rows = Object.entries(map).map(([k, e]) => ({ k, net: e.assets - e.debts, ...e })).filter(r => Math.abs(r.net) > 0.5 || r.assets > 0.5)
+      .sort((a, b) => b.net - a.net);
+    const maxAbs = Math.max(...rows.map(r => Math.abs(r.net)), 1), hasNeg = rows.some(r => r.net < 0);
+    const posMax = Math.max(0, ...rows.map(r => r.net)), negMax = Math.max(0, ...rows.map(r => -r.net));
+    const zero = hasNeg ? negMax / (posMax + negMax) * 100 : 0;
+    for (const r of rows) {
+      const row = document.createElement('div'); row.className = 'xp-row';
+      row.title = `${[].concat(labelOf(r.k)).join(' ')}: assets ${fmt(r.assets)}${r.debts ? `, debts ${fmt(r.debts)}` : ''}, net ${fmt(r.net)}`;
+      const name = document.createElement('span'); name.className = 'xp-name';
+      const [main, sub] = [].concat(labelOf(r.k)); name.textContent = main;
+      if (sub) { const sm = document.createElement('small'); sm.textContent = ' ' + sub; name.append(sm); }
+      const track = document.createElement('span'); track.className = 'xp-track';
+      const bar = document.createElement('i'); bar.className = r.net < 0 ? 'xp-neg' : 'xp-pos';
+      const span = (posMax + negMax) || maxAbs, w = Math.abs(r.net) / span * 100;
+      bar.style.width = w + '%'; bar.style.left = (r.net < 0 ? zero - w : zero) + '%';
+      if (hasNeg) { const z = document.createElement('b'); z.className = 'xp-zero'; z.style.left = zero + '%'; track.append(z); }
+      track.append(bar);
+      const amt = document.createElement('span'); amt.className = 'amt'; amt.textContent = fmt(r.net);
+      const pct = document.createElement('span'); pct.className = 'pct'; pct.textContent = nw > 0 ? Math.round(r.net / nw * 100) + '%' : '';
+      row.append(name, track, amt, pct); el.append(row);
+    }
+    el.setAttribute('aria-label', title + ': ' + rows.map(r => `${[].concat(labelOf(r.k)).join(' ')} ${nw > 0 ? Math.round(r.net / nw * 100) + '%' : fmt(r.net)}`).join(', '));
+    return rows;
+  }
+  function renderExposure() {
+    const sec = $('xpSection'); if (mode === 'locked') { sec.hidden = true; return; }
+    const list = visible().filter(i => !i.noFx);
+    const { country, currency } = exposures(list);
+    const nw = list.reduce((a, i) => a + (i.kind === 'debt' ? -i.value : i.value), 0);
+    if (!list.some(i => i.kind === 'asset' && i.value > 0)) { sec.hidden = true; return; }
+    sec.hidden = false;
+    const SHORT = { 'United States': 'US', 'United Kingdom': 'UK', 'Other countries': 'Other countries' };
+    const crow = drawExposure($('xpCountry'), country, nw, k => SHORT[k] || k, 'Net worth by country');
+    const xrow = drawExposure($('xpCurrency'), currency, nw, k => k === 'Other' ? 'Other' : [k, CUR_NAME[k] || ''], 'Net worth by currency');
+    // headline facts
+    const topC = crow[0], foreign = crow.filter(r => !r.k.startsWith('Global')).length;
+    $('xpCountryNote').textContent = topC && nw > 0 ? `${Math.round(topC.net / nw * 100)}% of your net worth is tied to ${SHORT[topC.k] || topC.k}, across ${foreign} countr${foreign === 1 ? 'y' : 'ies'}.` : '';
+    // spending vs holdings currency mismatch (from the Expenses table)
+    const spend = {}; let spendT = 0;
+    for (const e of expView()) if (e.monthly) { spend[e.currency] = (spend[e.currency] || 0) + e.monthly; spendT += e.monthly; }
+    if (!spendT) { spend[dispCur()] = 1; spendT = 1; }
+    const spendTxt = Object.entries(spend).sort((a, b) => b[1] - a[1]).map(([c, v]) => `${Math.round(v / spendT * 100)}% ${c}`).join(', ');
+    const outside = xrow.filter(r => !spend[r.k]).reduce((a, r) => a + r.net, 0);
+    $('xpSpend').textContent = nw > 0 ? `You spend in ${spendTxt}${expView().some(e => e.monthly) ? '' : ' (your display currency; add expenses to refine)'}. ${Math.round(outside / nw * 100)}% of your net worth sits in other currencies or in gold and bitcoin, so exchange-rate moves change what it buys for you.` : '';
+    const intl = list.some(i => i.kind === 'asset' && Object.keys(mixFor(i)).some(c => c.startsWith('International') || c === 'Equities'));
+    $('xpNote').textContent = 'Look-through estimates, net of debts.' + (intl ? ' International and global shares are split using approximate world stock-market weights, assumed unhedged; international bonds are assumed hedged to the fund’s currency.' : '') + ' Unspecified shares in a non-US fund (e.g. Aware Super’s) are counted as its home market.';
+  }
+
   // ---------- Returns panel ----------
   // Every asset counts at its value. A holding's 12-month return is its published/synced figure; cash without one
   // earns its interest rate (its Expected return); anything else without a figure counts as 0% and is called out.
@@ -825,9 +928,9 @@
     if (locked) {
       ownerView = '';
       ['totAssets', 'totDebts', 'totNet'].forEach(id => { $(id).textContent = '—'; });
-      $('mixSection').hidden = true; $('retSection').hidden = true; $('efSection').hidden = true; $('projSection').hidden = true; $('projTip').hidden = true; $('fxNote').hidden = true;
+      $('mixSection').hidden = true; $('xpSection').hidden = true; $('retSection').hidden = true; $('efSection').hidden = true; $('projSection').hidden = true; $('projTip').hidden = true; $('fxNote').hidden = true;
       [...$('projChart').querySelectorAll('svg')].forEach(n => n.remove()); $('projTable').textContent = ''; $('projHeadline').textContent = '';
-      ['assets', 'debts', 'assetMix', 'lookBar', 'lookTable', 'mixHint', 'fName', 'fNote', 'fVal', 'fAcct', 'fFund', 'fOwner', 'fTicker', 'fShares', 'fRate', 'fMonthly', 'fRet12', 'fRet5', 'fRetHint', 'retTable', 'retAll', 'retAllSub', 'retFunds', 'retFundsSub', 'retNote', 'efList', 'efMonths', 'efUnit', 'efSub', 'efAll', 'efBar', 'efVerdict', 'efFundInfo', 'efPickList', 'eName', 'eAmt', 'eOwner', 'eNote', 'tidyList', 'fxList', 'fxText', 'acctList', 'ownerList', 'fundList']
+      ['assets', 'debts', 'assetMix', 'lookBar', 'lookTable', 'mixHint', 'fName', 'fNote', 'fVal', 'fAcct', 'fFund', 'fOwner', 'fTicker', 'fShares', 'fRate', 'fMonthly', 'fRet12', 'fRet5', 'fRetHint', 'xpCountry', 'xpCurrency', 'xpCountryNote', 'xpSpend', 'xpNote', 'retTable', 'retAll', 'retAllSub', 'retFunds', 'retFundsSub', 'retNote', 'efList', 'efMonths', 'efUnit', 'efSub', 'efAll', 'efBar', 'efVerdict', 'efFundInfo', 'efPickList', 'eName', 'eAmt', 'eOwner', 'eNote', 'tidyList', 'fxList', 'fxText', 'acctList', 'ownerList', 'fundList']
         .forEach(id => { const el = $(id); if (el.tagName === 'INPUT') el.value = ''; else el.textContent = ''; });
       return;
     }
@@ -838,7 +941,7 @@
     $('totNet').textContent = fmt(a - d);
     $('tidyBtn').hidden = !items.some(i => i.kind === 'asset');
     renderFxNote(vis);
-    renderMix(); renderLookThrough(); renderReturns(); renderEmergency(); renderProjection(); renderList('asset'); renderList('debt');
+    renderMix(); renderLookThrough(); renderExposure(); renderReturns(); renderEmergency(); renderProjection(); renderList('asset'); renderList('debt');
   }
 
   // Generic busy wrapper for form buttons

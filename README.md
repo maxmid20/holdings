@@ -70,6 +70,17 @@ Each holding can show its **12-month** and **5-year (per year)** total return, m
 
 The asset list shows each holding's returns and a value-weighted 12-month return for each bucket. The **Returns** panel gives two overall figures: **all assets** (every asset at its value: cash earns its interest rate, and anything without a figure counts as 0% and is called out) and **invested holdings only** (just the holdings with a return), plus a table of how much each group adds. These describe the funds' past performance, not your own money-weighted return, and the projection doesn't use them. The edit form has a **Use the 5-year average** link if you want to copy that figure into the holding's Expected return.
 
+## Macro exposure
+
+Two look-through views of your net worth, net of debts: **by country** (where the economic risk sits) and **by currency** (what an exchange-rate move would hit).
+
+- Each holding is split by its asset classes (fund breakdown, then Asset class, then category). US stocks and bonds count as the United States in USD.
+- **International shares** are spread over the world stock market minus the fund's home country, using approximate index weights, and are assumed unhedged. So they show up in EUR, JPY, GBP and so on.
+- **International bonds** are spread over the same countries but kept in the fund's own currency, since these funds are usually hedged.
+- **Unspecified shares or bonds** count as the whole world in a US fund, and as the home market in a non-US fund (e.g. Aware Super).
+- **Cash, property and "other"** count in the holding's own country and currency. **Gold** (XAU) and **bitcoin** (BTC) are stateless and show as their own currencies. **Commodities** count as global, priced in USD. **Debts** subtract in their own country and currency (a GBP loan is a short position in GBP).
+- The currency card compares your holdings with the currencies you **spend** in (from the Expenses table) and shows how much of your net worth sits outside them.
+
 ## Emergency fund
 
 The **Emergency fund** section answers "how many months could I live on my emergency fund?"

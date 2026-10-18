@@ -180,3 +180,19 @@ dialog.wide{width:min(760px,calc(100vw - 32px))}
 .tag{display:inline-block;font-size:11px;font-weight:500;padding:1px 6px;border-radius:999px;background:var(--surface-2);color:var(--muted);vertical-align:1px;margin-left:4px}
 .muted{color:var(--muted)}
 .ef-pick{display:grid;gap:6px;max-height:50vh;overflow:auto;margin:6px 0 10px}
+/* Macro exposure */
+.xp-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media (max-width:760px){.xp-grid{grid-template-columns:1fr}}
+.card-title{font-size:14px;margin:0 0 8px;font-weight:600}
+.xp-row{display:grid;grid-template-columns:minmax(90px,1.2fr) 1.4fr auto 40px;gap:10px;align-items:center;padding:6px 0;border-top:1px solid var(--line);font-size:13px}
+.xp-row:first-child{border-top:0}
+.xp-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.xp-track{position:relative;height:10px}
+.xp-track i{position:absolute;top:0;bottom:0;border-radius:3px;min-width:2px}
+.xp-pos{background:var(--s1)}
+.xp-neg{background:var(--s2)}
+.xp-zero{position:absolute;top:-3px;bottom:-3px;width:1px;background:var(--muted)}
+.xp-row .pct{color:var(--muted);text-align:right;font-variant-numeric:tabular-nums}
+#xpSection > .hint{margin-top:8px}
+.xp-name small{color:var(--muted);font-size:12px}
+@media (max-width:520px){.xp-name small{display:none}.xp-row{grid-template-columns:minmax(70px,1fr) 1.2fr auto 36px}}

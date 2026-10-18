@@ -6,8 +6,8 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://api.airtable.com; form-action 'none'; base-uri 'none'; object-src 'none'">
 <meta name="referrer" content="no-referrer">
 <title>Holdings</title>
-<link rel="stylesheet" href="styles.css?v=2026-10-18g">
-<script src="app.js?v=2026-10-18g" defer></script>
+<link rel="stylesheet" href="styles.css?v=2026-10-18h">
+<script src="app.js?v=2026-10-18h" defer></script>
 </head>
 <body>
 <div class="wrap">
@@ -45,6 +45,22 @@
         <div id="lookBar"></div>
         <div id="lookTable"></div>
       </div>
+    </div>
+    <div class="section" id="xpSection" hidden>
+      <div class="section-head"><h2>Macro exposure</h2><span class="hint">Look-through, net of debts</span></div>
+      <div class="xp-grid">
+        <div class="card">
+          <h3 class="card-title">By country</h3>
+          <div class="xp-list" id="xpCountry" role="img"></div>
+          <p class="hint" id="xpCountryNote"></p>
+        </div>
+        <div class="card">
+          <h3 class="card-title">By currency</h3>
+          <div class="xp-list" id="xpCurrency" role="img"></div>
+          <p class="hint" id="xpSpend"></p>
+        </div>
+      </div>
+      <p class="hint" id="xpNote"></p>
     </div>
     <div class="section" id="retSection" hidden>
       <div class="section-head"><h2>Returns</h2><span class="hint">Last 12 months · past returns, not a forecast</span></div>
