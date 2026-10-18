@@ -124,6 +124,7 @@
   let session = null; // { token, baseId, table } — kept in memory only while unlocked
   let items = mode === 'local' ? loadLocalItems() : [];
   let expenses = mode === 'local' ? loadLocalExpenses() : [];   // monthly living expenses
+  let asides = mode === 'local' ? loadLocalAsides() : [];       // cash earmarked for goals (business capital, a deposit…)
   let lastActivity = Date.now();
   let failedUnlocks = 0;
 
@@ -135,7 +136,19 @@
     const s = parse(store.get(LOCAL_KEY));
     return s && Array.isArray(s.expenses) ? s.expenses.map(e => ({ id: String(e.id || uid()), ...cleanExp(e) })) : [];
   }
-  function saveLocal() { store.set(LOCAL_KEY, JSON.stringify({ items, expenses })); }
+  function loadLocalAsides() {
+    const s = parse(store.get(LOCAL_KEY));
+    return s && Array.isArray(s.asides) ? s.asides.map(a => ({ id: String(a.id || uid()), ...cleanAside(a) })) : [];
+  }
+  function saveLocal() { store.set(LOCAL_KEY, JSON.stringify({ items, expenses, asides })); }
+  function cleanAside(raw) {
+    return {
+      name: String((raw && raw.name) || '').trim().slice(0, 120) || 'Set-aside',
+      amount: posOrNull(raw && raw.amount),
+      currency: (c => PRICED.includes(c) ? BASE_CUR : c)(curOf(raw && raw.currency)),
+      note: String((raw && raw.note) || '').trim().slice(0, 300)
+    };
+  }
 
   // A monthly living expense. Amount is per month in its currency; essential = needed even in an emergency.
   const EXP_CATS = ['Housing', 'Utilities', 'Groceries', 'Transport', 'Insurance', 'Health', 'Debt payments', 'Childcare & education', 'Phone & internet', 'Subscriptions', 'Dining & entertainment', 'Travel', 'Other'];
@@ -355,10 +368,43 @@
     if (mode === 'local') saveLocal();
   }
 
+  // ---------- Set-asides table ----------
+  const ASIDE_TABLE = 'Set-asides';
+  let asideTableOk = false;
+  const asidePath = () => `${session.baseId}/${encodeURIComponent(ASIDE_TABLE)}`;
+  const fromAsideRecord = r => ({ id: r.id, ...cleanAside({ name: r.fields.Name, amount: r.fields.Amount, currency: r.fields.Currency, note: r.fields.Note }) });
+  const toAsideFields = d => ({ Name: d.name, Amount: d.amount, Currency: d.currency !== BASE_CUR ? d.currency : null, Note: d.note || null });
+  async function atLoadAsides() {
+    const j = await at(`${asidePath()}?pageSize=100`);
+    return (j.records || []).filter(r => REC_RE.test(r.id) && r.fields).map(fromAsideRecord);
+  }
+  async function saveAside(id, d) {
+    if (mode === 'airtable') {
+      if (id) {
+        if (!REC_RE.test(id)) throw new Error('Invalid record');
+        const r = await at(`${asidePath()}/${id}`, { method: 'PATCH', body: { fields: toAsideFields(d), typecast: true } });
+        const k = asides.findIndex(x => x.id === id); if (k >= 0) asides[k] = fromAsideRecord(r);
+      } else {
+        const j = await at(asidePath(), { method: 'POST', body: { records: [{ fields: toAsideFields(d) }], typecast: true } });
+        asides.push(...(j.records || []).map(fromAsideRecord));
+      }
+    } else {
+      if (id) { const k = asides.findIndex(x => x.id === id); if (k >= 0) asides[k] = { id, ...d }; } else asides.push({ id: uid(), ...d });
+      saveLocal();
+    }
+  }
+  async function removeAside(id) {
+    if (mode === 'airtable') { if (!REC_RE.test(id)) throw new Error('Invalid record'); await at(`${asidePath()}/${id}`, { method: 'DELETE' }); }
+    asides = asides.filter(x => x.id !== id);
+    if (mode === 'local') saveLocal();
+  }
+
   async function loadAirtable() {
     items = await atLoadAll();
     try { breakdown = await atLoadBreakdown(); }
     catch (x) { breakdown = {}; }                        // the table is optional; the app works without it
+    try { asides = await atLoadAsides(); asideTableOk = true; }
+    catch (x) { asides = []; asideTableOk = false; }
     try { expenses = await atLoadExpenses(); expTableOk = true; }
     catch (x) { expenses = []; expTableOk = false; }
     try { fx = await atLoadFx(); fxTableOk = true; }
@@ -401,7 +447,7 @@
   // ---------- Lock / unlock ----------
   function lock(reason) {
     if (mode !== 'airtable') return;
-    session = null; items = []; expenses = []; breakdown = {}; fx = {}; mode = 'locked';
+    session = null; items = []; expenses = []; asides = []; breakdown = {}; fx = {}; mode = 'locked';
     document.querySelectorAll('dialog[open]').forEach(d => d.close());
     clearSecrets();
     render();
@@ -713,7 +759,11 @@
   function renderEmergency() {
     const sec = $('efSection'); if (mode === 'locked') { sec.hidden = true; return; }
     sec.hidden = false;
-    const fund = efHoldings(), fundTotal = fund.reduce((a, i) => a + i.value, 0);
+    const fund = efHoldings(), cashTotal = fund.reduce((a, i) => a + i.value, 0);
+    const av = asides.map(a => ({ ...a, v: a.amount === null ? null : conv(a.amount, a.currency) }));
+    const setAside = av.reduce((t, a) => t + (a.v || 0), 0);
+    const fundTotal = Math.max(0, cashTotal - setAside);
+    renderAsides(av, cashTotal, setAside, fundTotal);
     const ex = expView(), set = ex.filter(e => e.monthly !== null);
     const essential = set.filter(e => e.essential).reduce((a, e) => a + e.monthly, 0), all = set.reduce((a, e) => a + e.monthly, 0);
     const base = essential || all, m = base ? fundTotal / base : null;
@@ -796,6 +846,53 @@
   $('efPick').onclick = openEfPick;
   $('efPickCash').onclick = () => { EF.mode = 'cash'; EF.ids = []; savePrefs(); $('efPickDlg').close(); render(); };
   $('efPickSave').onclick = () => { EF.mode = 'custom'; EF.ids = [...$('efPickList').querySelectorAll('input:checked')].map(c => c.value); savePrefs(); $('efPickDlg').close(); render(); };
+
+  // Set-asides: Total cash − earmarked amounts = the emergency fund.
+  function renderAsides(av, cashTotal, setAside, fundTotal) {
+    const el = $('efCalc'); el.textContent = '';
+    if (!av.length) { $('efCalc').hidden = true; return; }
+    $('efCalc').hidden = false;
+    const line = (label, amount, cls, id, sub) => {
+      const r = document.createElement('div'); r.className = 'ef-line ' + (cls || '');
+      const n = document.createElement('span'); n.textContent = label;
+      if (sub) { const sm = document.createElement('small'); sm.textContent = ' ' + sub; n.append(sm); }
+      const a = document.createElement('span'); a.className = 'amt'; a.textContent = amount;
+      r.append(n, a);
+      if (id) { const b = document.createElement('button'); b.type = 'button'; b.className = 'icon-btn'; b.dataset.aside = id; b.setAttribute('aria-label', 'Edit ' + label); b.textContent = '✎'; r.append(b); }
+      else r.append(document.createElement('span'));
+      el.append(r);
+    };
+    line('Total cash', fmt(cashTotal), 'ef-total');
+    for (const a of av) line(a.name, a.v === null ? (a.amount === null ? 'not set' : 'no rate') : '−' + fmt(a.v), 'ef-minus', a.id,
+      a.amount !== null && a.currency !== dispCur() ? fmtIn(a.amount, a.currency) : (a.note || ''));
+    line('Emergency fund', fmt(fundTotal), 'ef-result');
+    if (setAside > cashTotal) { const w = document.createElement('p'); w.className = 'hint warn-text'; w.textContent = `Your set-asides are ${fmt(setAside - cashTotal)} more than your cash, so there’s no emergency fund left.`; el.append(w); }
+  }
+  let editingAside = null;
+  function openAside(a) {
+    if (mode === 'airtable' && !asideTableOk) return showBanner(`Your base has no “${ASIDE_TABLE}” table yet (see the README).`);
+    editingAside = a ? a.id : null;
+    $('asTitle').textContent = a ? 'Edit set-aside' : 'Set aside cash';
+    $('asName').value = a ? a.name : ''; $('asAmt').value = a && a.amount !== null ? a.amount : '';
+    $('asCur').value = a ? a.currency : dispCur(); $('asNote').value = a ? a.note : '';
+    $('asDel').hidden = !a; $('asErr').textContent = '';
+    $('asideDlg').showModal();
+  }
+  $('asAdd').onclick = () => openAside(null);
+  $('asideForm').addEventListener('submit', async ev => {
+    ev.preventDefault();
+    if (!$('asName').value.trim()) { $('asErr').textContent = 'Please enter a name, e.g. Business capital.'; return; }
+    if ($('asAmt').value !== '' && posOrNull($('asAmt').value) === null) { $('asErr').textContent = 'Enter an amount of 0 or more.'; return; }
+    const d = cleanAside({ name: $('asName').value, amount: $('asAmt').value, currency: $('asCur').value, note: $('asNote').value });
+    try { await busy($('asSave'), () => saveAside(editingAside, d)); $('asideDlg').close(); render(); }
+    catch (x) { $('asErr').textContent = x.message; }
+  });
+  $('asDel').onclick = async () => {
+    const a = asides.find(x => x.id === editingAside);
+    if (!a || !confirm(`Delete “${a.name}”?`)) return;
+    try { await busy($('asDel'), () => removeAside(a.id)); $('asideDlg').close(); render(); }
+    catch (x) { $('asErr').textContent = x.message; }
+  };
 
   // ---------- Projection ----------
   const NO_GROWTH = ['Cash'];
@@ -930,7 +1027,7 @@
       ['totAssets', 'totDebts', 'totNet'].forEach(id => { $(id).textContent = '—'; });
       $('mixSection').hidden = true; $('xpSection').hidden = true; $('retSection').hidden = true; $('efSection').hidden = true; $('projSection').hidden = true; $('projTip').hidden = true; $('fxNote').hidden = true;
       [...$('projChart').querySelectorAll('svg')].forEach(n => n.remove()); $('projTable').textContent = ''; $('projHeadline').textContent = '';
-      ['assets', 'debts', 'assetMix', 'lookBar', 'lookTable', 'mixHint', 'fName', 'fNote', 'fVal', 'fAcct', 'fFund', 'fOwner', 'fTicker', 'fShares', 'fRate', 'fMonthly', 'fRet12', 'fRet5', 'fRetHint', 'xpCountry', 'xpCurrency', 'xpCountryNote', 'xpSpend', 'xpNote', 'retTable', 'retAll', 'retAllSub', 'retFunds', 'retFundsSub', 'retNote', 'efList', 'efMonths', 'efUnit', 'efSub', 'efAll', 'efBar', 'efVerdict', 'efFundInfo', 'efPickList', 'eName', 'eAmt', 'eOwner', 'eNote', 'tidyList', 'fxList', 'fxText', 'acctList', 'ownerList', 'fundList']
+      ['assets', 'debts', 'assetMix', 'lookBar', 'lookTable', 'mixHint', 'fName', 'fNote', 'fVal', 'fAcct', 'fFund', 'fOwner', 'fTicker', 'fShares', 'fRate', 'fMonthly', 'fRet12', 'fRet5', 'fRetHint', 'xpCountry', 'xpCurrency', 'xpCountryNote', 'xpSpend', 'xpNote', 'retTable', 'retAll', 'retAllSub', 'retFunds', 'retFundsSub', 'retNote', 'efList', 'efCalc', 'asName', 'asAmt', 'asNote', 'efMonths', 'efUnit', 'efSub', 'efAll', 'efBar', 'efVerdict', 'efFundInfo', 'efPickList', 'eName', 'eAmt', 'eOwner', 'eNote', 'tidyList', 'fxList', 'fxText', 'acctList', 'ownerList', 'fundList']
         .forEach(id => { const el = $(id); if (el.tagName === 'INPUT') el.value = ''; else el.textContent = ''; });
       return;
     }
@@ -1162,6 +1259,7 @@
     const t = e.target instanceof Element ? e.target : null; if (!t) return;
     const close = t.closest('[data-close]'); if (close) { close.closest('dialog').close(); clearSecrets(); return; }
     const add = t.closest('[data-add]'); if (add) { openItem(add.dataset.add); return; }
+    const as = t.closest('[data-aside]'); if (as) { const a = asides.find(x => x.id === as.dataset.aside); if (a) openAside(a); return; }
     const ex = t.closest('[data-exp]'); if (ex) { const e = expenses.find(x => x.id === ex.dataset.exp); if (e) openExpense(e); return; }
     const ed = t.closest('[data-edit]'); if (ed) { const it = items.find(i => i.id === ed.dataset.edit); if (it) openItem(it.kind, it); }
   });
@@ -1169,7 +1267,7 @@
   // ---------- Connect / unlock / disconnect ----------
   $('connBtn').onclick = () => {
     if (mode === 'local') {
-      const n = items.length + expenses.length;
+      const n = items.length + expenses.length + asides.length;
       $('cUploadRow').hidden = n === 0; $('cUploadN').textContent = n;
       $('connectErr').textContent = '';
       $('connectDlg').showModal();
@@ -1195,6 +1293,7 @@
     if (pass === token) return err('Your passphrase must be different from the token.');
     const upload = !$('cUploadRow').hidden && $('cUpload').checked ? items.map(clean) : [];
     const uploadExp = !$('cUploadRow').hidden && $('cUpload').checked ? expenses.map(cleanExp) : [];
+    const uploadAside = !$('cUploadRow').hidden && $('cUpload').checked ? asides.map(cleanAside) : [];
     try {
       await busy($('connectSave'), async () => {
         session = { token, baseId, table };
@@ -1205,7 +1304,8 @@
           if (!store.set(VAULT_KEY, JSON.stringify(box))) throw new Error('This browser blocked local storage, so the connection can’t be saved.');
           if (upload.length) await atCreateMany(upload);
           for (let k = 0; k < uploadExp.length; k += 10) await at(expPath(), { method: 'POST', body: { records: uploadExp.slice(k, k + 10).map(d => ({ fields: toExpFields(d) })), typecast: true } });
-          if (upload.length || uploadExp.length) store.del(LOCAL_KEY);
+          if (uploadAside.length) await at(asidePath(), { method: 'POST', body: { records: uploadAside.slice(0, 10).map(d => ({ fields: toAsideFields(d) })), typecast: true } });
+          if (upload.length || uploadExp.length || uploadAside.length) store.del(LOCAL_KEY);
           await loadAirtable();
         } catch (x) { session = null; mode = prevMode; throw x; }
       });
@@ -1217,7 +1317,7 @@
   $('unlockForm').addEventListener('submit', async e => {
     e.preventDefault();
     const box = parse(store.get(VAULT_KEY));
-    if (!box) { mode = 'local'; items = loadLocalItems(); expenses = loadLocalExpenses(); $('unlockDlg').close(); render(); return; }
+    if (!box) { mode = 'local'; items = loadLocalItems(); expenses = loadLocalExpenses(); asides = loadLocalAsides(); $('unlockDlg').close(); render(); return; }
     try {
       await busy($('unlockSave'), async () => {
         if (failedUnlocks >= 3) await sleep(Math.min(30000, 1000 * 2 ** (failedUnlocks - 2)));
@@ -1235,7 +1335,7 @@
 
   function disconnect() {
     if (!confirm('Disconnect Airtable on this device? Your data stays in Airtable, and the encrypted token is erased from this browser. You can reconnect anytime with a token.')) return;
-    store.del(VAULT_KEY); session = null; breakdown = {}; mode = 'local'; items = loadLocalItems(); expenses = loadLocalExpenses(); fx = localFx();
+    store.del(VAULT_KEY); session = null; breakdown = {}; mode = 'local'; items = loadLocalItems(); expenses = loadLocalExpenses(); asides = loadLocalAsides(); fx = localFx();
     document.querySelectorAll('dialog[open]').forEach(d => d.close()); clearSecrets(); render();
     showBanner('Disconnected. For extra safety, you can also revoke the token at airtable.com/create/tokens.', 'info');
   }
@@ -1247,7 +1347,7 @@
   const cur = $('currency');
   for (const c of CURRENCIES) {
     const o = document.createElement('option'); o.value = c; o.textContent = CUR_LABEL[c] || c; $('fCur').append(o);
-    if (!PRICED.includes(c)) { const x = document.createElement('option'); x.value = c; x.textContent = c; $('eCur').append(x); }
+    if (!PRICED.includes(c)) { const x = document.createElement('option'); x.value = c; x.textContent = c; $('eCur').append(x); $('asCur').append(x.cloneNode(true)); }
     if (DISPLAY_CURRENCIES.includes(c)) { const d = document.createElement('option'); d.textContent = c; cur.append(d); }
   }
   cur.value = prefs.currency;
@@ -1327,7 +1427,7 @@
   $('exportBtn').onclick = () => {
     if (mode === 'locked') return;
     if (!confirm('The backup file will contain your balances unencrypted. Keep it somewhere safe. Continue?')) return;
-    const data = { app: 'holdings', version: 2, exported: new Date().toISOString(), items: items.map(({ id, ...rest }) => rest), expenses: expenses.map(({ id, ...rest }) => rest) };
+    const data = { app: 'holdings', version: 2, exported: new Date().toISOString(), items: items.map(({ id, ...rest }) => rest), expenses: expenses.map(({ id, ...rest }) => rest), asides: asides.map(({ id, ...rest }) => rest) };
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
     a.download = `holdings-${new Date().toISOString().slice(0, 10)}.json`;
@@ -1338,10 +1438,11 @@
     const f = e.target.files[0]; e.target.value = '';
     if (!f) return;
     if (f.size > 5 * 1024 * 1024) return showBanner('That file is too large to be a Holdings backup.');
-    let list, expList = [];
+    let list, expList = [], asideList = [];
     try {
       const s = JSON.parse(await f.text()); if (!Array.isArray(s.items) || s.items.length > 5000) throw 0; list = s.items.map(clean);
       if (Array.isArray(s.expenses) && s.expenses.length <= 2000) expList = s.expenses.map(cleanExp);
+      if (Array.isArray(s.asides) && s.asides.length <= 200) asideList = s.asides.map(cleanAside);
     }
     catch (x) { return showBanner('That file isn’t a valid Holdings backup.'); }
     try {
@@ -1350,10 +1451,11 @@
         showBanner(`Uploading ${list.length} items…`, 'info');
         items.push(...await atCreateMany(list));
         for (const d of expList) await addExpense(d);
+        for (const d of asideList) await saveAside(null, d);
         showBanner(`Added ${list.length} items${expList.length ? ` and ${expList.length} expenses` : ''} to Airtable.`, 'info');
       } else {
         if (!confirm('Replace the data in this browser with this file?')) return;
-        items = list.map(d => ({ id: uid(), ...d })); expenses = expList.map(d => ({ id: uid(), ...d })); saveLocal();
+        items = list.map(d => ({ id: uid(), ...d })); expenses = expList.map(d => ({ id: uid(), ...d })); asides = asideList.map(d => ({ id: uid(), ...d })); saveLocal();
       }
       render();
     } catch (x) { showBanner(x.message); render(); }

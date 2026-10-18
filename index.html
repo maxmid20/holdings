@@ -6,8 +6,8 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://api.airtable.com; form-action 'none'; base-uri 'none'; object-src 'none'">
 <meta name="referrer" content="no-referrer">
 <title>Holdings</title>
-<link rel="stylesheet" href="styles.css?v=2026-10-18h">
-<script src="app.js?v=2026-10-18h" defer></script>
+<link rel="stylesheet" href="styles.css?v=2026-10-18i">
+<script src="app.js?v=2026-10-18i" defer></script>
 </head>
 <body>
 <div class="wrap">
@@ -76,6 +76,7 @@
     <div class="section" id="efSection" hidden>
       <div class="section-head"><h2>Emergency fund</h2><button class="btn primary" type="button" id="expAdd">+ Add expense</button></div>
       <div class="card">
+        <div class="ef-calc" id="efCalc" hidden></div>
         <div class="label">Months of cover</div>
         <div class="ef-big"><span id="efMonths">—</span><span class="ef-unit" id="efUnit"></span></div>
         <p class="hint" id="efSub"></p>
@@ -83,7 +84,7 @@
         <div class="ef-scale" id="efScale" hidden><span>0</span><span class="ef-s3">3</span><span class="ef-s6">6</span><span>12 months</span></div>
         <p class="ef-verdict" id="efVerdict"></p>
         <p class="hint" id="efAll"></p>
-        <p class="hint"><span id="efFundInfo"></span><button type="button" class="link-btn" id="efPick">Choose holdings</button></p>
+        <p class="hint"><span id="efFundInfo"></span><button type="button" class="link-btn" id="efPick">Choose holdings</button> · <button type="button" class="link-btn" id="asAdd">Set aside cash for a goal</button></p>
       </div>
       <h3 class="sub-head">Monthly living expenses</h3>
       <div id="efList"></div>
@@ -240,6 +241,27 @@
       <span class="spacer"></span>
       <button type="button" class="btn" data-close>Cancel</button>
       <button type="submit" class="btn primary" id="expSave">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Set aside cash -->
+<dialog id="asideDlg">
+  <form id="asideForm" novalidate>
+    <h3 id="asTitle">Set aside cash</h3>
+    <p class="sub">Cash you’re keeping for something else, e.g. business capital or a house deposit. It’s taken off your total cash before working out your emergency fund.</p>
+    <div class="field"><label for="asName">What it’s for</label><input id="asName" maxlength="120" placeholder="e.g. Business capital" autocomplete="off"></div>
+    <div class="field-row val-row">
+      <div class="field"><label for="asAmt">Amount</label><input id="asAmt" type="number" step="any" min="0" inputmode="decimal" placeholder="0"></div>
+      <div class="field"><label for="asCur">Currency</label><select id="asCur"></select></div>
+    </div>
+    <div class="field"><label for="asNote">Note (optional)</label><input id="asNote" maxlength="300" autocomplete="off" placeholder="e.g. Needed by mid-2027"></div>
+    <p class="form-err" id="asErr"></p>
+    <div class="actions">
+      <button type="button" class="btn danger" id="asDel" hidden>Delete</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn" data-close>Cancel</button>
+      <button type="submit" class="btn primary" id="asSave">Save</button>
     </div>
   </form>
 </dialog>

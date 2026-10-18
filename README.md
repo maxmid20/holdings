@@ -89,6 +89,7 @@ The **Emergency fund** section answers "how many months could I live on my emerg
 - **Months of cover** = your emergency fund ÷ your monthly **essential** spending (or all spending, if nothing is marked essential). The app also shows how long it lasts if you kept all spending.
 - **The emergency fund** is every holding in the Cash bucket by default (in any currency). Use **Choose holdings** to pick exactly which holdings count; that choice is saved in your browser.
 - A meter shows 0–12 months, marking the common 3–6 month guideline.
+- **Set-asides** are cash you're keeping for something else, like business capital or a house deposit. They live in a **Set-asides** table: `Name` (primary), `Amount` (Number, 2 dp), `Currency` (text, blank = USD) and `Note`. The card shows **Total cash − each set-aside = Emergency fund**, and months of cover use what's left.
 
 ## Projection
 
