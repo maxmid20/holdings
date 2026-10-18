@@ -62,7 +62,7 @@
       </div>
     </div>
     <div class="section">
-      <div class="section-head"><h2>Assets</h2><button class="btn primary" type="button" data-add="asset">+ Add asset</button></div>
+      <div class="section-head"><h2>Assets</h2><span class="head-actions"><button class="btn" type="button" id="tidyBtn">Tidy up</button><button class="btn primary" type="button" data-add="asset">+ Add asset</button></span></div>
       <div id="assetMix"></div>
       <div id="assets"></div>
     </div>
@@ -80,7 +80,10 @@
   <form id="itemForm" novalidate>
     <h3 id="itemTitle">Add item</h3>
     <div class="field"><label for="fName">Name</label><input id="fName" maxlength="120" required placeholder="e.g. Checking account" autocomplete="off"></div>
-    <div class="field"><label for="fCat">Category</label><select id="fCat"></select></div>
+    <div class="field-row">
+      <div class="field"><label for="fCat">Category / account</label><select id="fCat"></select></div>
+      <div class="field" id="fClassWrap"><label for="fClass">Bucket</label><select id="fClass"></select></div>
+    </div>
     <div class="field"><label for="fVal">Value</label><input id="fVal" type="number" step="0.01" min="0" max="1000000000000" required inputmode="decimal"></div>
     <div class="field-row">
       <div class="field"><label for="fAcct">Account type</label><input id="fAcct" maxlength="80" list="acctList" placeholder="e.g. 401(k)" autocomplete="off"></div>
@@ -145,6 +148,20 @@
       <button type="submit" class="btn primary" id="unlockSave">Unlock</button>
     </div>
   </form>
+</dialog>
+
+<!-- Tidy up: suggest tickers and buckets for messy entries -->
+<dialog id="tidyDlg" class="wide">
+  <h3>Tidy up your holdings</h3>
+  <p class="sub">I read each holding's name, category and account, pull out any ticker, and suggest a bucket. Check or change each suggestion, then save. Nothing changes until you click Save.</p>
+  <div class="tidy-list" id="tidyList"></div>
+  <p class="form-err" id="tidyErr"></p>
+  <div class="actions">
+    <span class="hint" id="tidyCount"></span>
+    <span class="spacer"></span>
+    <button type="button" class="btn" data-close>Cancel</button>
+    <button type="button" class="btn primary" id="tidySave">Save changes</button>
+  </div>
 </dialog>
 
 <!-- Connection menu -->

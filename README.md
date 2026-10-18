@@ -29,6 +29,21 @@ Create a new base, for example "Holdings", with one table named **`Items`** and 
 | `Price`, `Priced on` | Number / text, written by the daily sync |
 | `Expected return %` | Number (2 dp, negatives allowed), optional. For a debt, this is its interest rate |
 | `Monthly contribution` | Number (2 dp), optional. For a debt, this is its monthly payment |
+| `Asset class` | Single line text, optional. One of: US stocks, International stocks, Equities, US bonds, International bonds, Bonds, Cash, Property, Gold, Commodities, Bitcoin, Crypto, Other. Set by **Tidy up** or the Bucket picker |
+
+## Buckets
+
+Everything rolls up into eight buckets: **Equities, Bonds, Cash, Gold, Property, Commodities, Bitcoin, Other**. Equities and Bonds keep a US / International / Global detail.
+
+Each holding's bucket comes from, in order:
+1. its ticker's **Fund breakdown** rows (multi-asset funds such as VTTSX or Aware Super are split proportionally),
+2. its own **Asset class**,
+3. its category (Cash, Property, Bitcoin, Gold),
+4. otherwise **Other**.
+
+**Tidy up** (next to "+ Add asset") reads each holding's name, category and account, pulls out tickers buried in names ("Gold IAU ISHARES…" → IAU), suggests a bucket with the reason, and saves your accepted choices to Airtable. It runs entirely in your browser.
+
+Funds without a ticker can still be split: add rows to Fund breakdown under a code (e.g. `AWARE-HG` for Aware Super High Growth) and set that code as the holding's Ticker. Tidy up does this automatically for Aware Super.
 
 ## Projection
 

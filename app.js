@@ -19,6 +19,20 @@
   const COLORS = ['#2f5d50', '#c8963e', '#5b7fa6', '#a65b7f', '#6e9c4f', '#8a6fbf', '#c46a4a', '#7a7a7a'];
   const CURRENCIES = ['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY', 'CHF', 'INR'];
 
+  // Buckets are what you see; classes are the finer detail stored in Airtable (they roll up into buckets).
+  const BUCKETS = ['Equities', 'Bonds', 'Cash', 'Gold', 'Property', 'Commodities', 'Bitcoin', 'Other'];
+  const CLASSES = ['US stocks', 'International stocks', 'Equities', 'US bonds', 'International bonds', 'Bonds',
+    'Cash', 'Property', 'Gold', 'Commodities', 'Bitcoin', 'Crypto', 'Other'];
+  const CLASS_LABEL = { 'US stocks': 'Equities — US', 'International stocks': 'Equities — International', 'Equities': 'Equities — Global',
+    'US bonds': 'Bonds — US', 'International bonds': 'Bonds — International', 'Bonds': 'Bonds — Global', 'Crypto': 'Other crypto' };
+  const ALIAS = { 'Real estate': 'Property' };
+  const normClass = c => { const x = ALIAS[c] || c; return CLASSES.includes(x) ? x : ''; };
+  const BUCKET_OF = { 'US stocks': 'Equities', 'International stocks': 'Equities', 'Equities': 'Equities', 'US bonds': 'Bonds',
+    'International bonds': 'Bonds', 'Bonds': 'Bonds', 'Crypto': 'Bitcoin' };
+  const bucketOf = c => BUCKET_OF[c] || (BUCKETS.includes(c) ? c : 'Other');
+  const REGION_OF = { 'US stocks': 'US', 'International stocks': 'International', 'Equities': 'Global', 'US bonds': 'US', 'International bonds': 'International', 'Bonds': 'Global' };
+  const CATEGORY_CLASS = { 'Cash': 'Cash', 'Real estate': 'Property', 'Property': 'Property', 'Crypto': 'Bitcoin', 'Bitcoin': 'Bitcoin', 'Gold': 'Gold' };
+
   // ---------- Helpers ----------
   const $ = id => document.getElementById(id);
   const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -50,7 +64,8 @@
       price: posOrNull(raw && raw.price),
       pricedOn: /^\d{4}-\d{2}-\d{2}/.test(String((raw && raw.pricedOn) || '')) ? String(raw.pricedOn).slice(0, 10) : '',
       rate: rateOrNull(raw && raw.rate),
-      monthly: posOrNull(raw && raw.monthly)
+      monthly: posOrNull(raw && raw.monthly),
+      assetClass: normClass(String((raw && raw.assetClass) || '').trim())
     };
   }
   const TICKER_RE = /^[A-Z0-9][A-Z0-9.\-]{0,11}$/;
@@ -150,13 +165,13 @@
       category: r.fields.Category, value: r.fields.Value, note: r.fields.Note,
       accountType: r.fields['Account type'], fund: r.fields.Fund, owner: r.fields.Owner,
       ticker: r.fields.Ticker, shares: r.fields.Shares, price: r.fields.Price, pricedOn: r.fields['Priced on'],
-      rate: r.fields['Expected return %'], monthly: r.fields['Monthly contribution']
+      rate: r.fields['Expected return %'], monthly: r.fields['Monthly contribution'], assetClass: r.fields['Asset class']
     })
   });
   const toFields = d => ({
     Name: d.name, Kind: d.kind === 'debt' ? 'Debt' : 'Asset', Category: d.category, Value: d.value, Note: d.note,
     'Account type': d.accountType, Fund: d.fund, Owner: d.owner, Ticker: d.ticker, Shares: d.shares,
-    'Expected return %': d.rate, 'Monthly contribution': d.monthly
+    'Expected return %': d.rate, 'Monthly contribution': d.monthly, 'Asset class': d.assetClass || null
   });
 
   async function atLoadAll() {
@@ -171,9 +186,19 @@
     return out;
   }
   // ---------- Fund breakdown (written by the daily sync; the app only reads it) ----------
-  const CLASSES = ['US stocks', 'International stocks', 'US bonds', 'International bonds', 'Cash', 'Real estate', 'Crypto', 'Other'];
-  const CLASS_COLORS = ['#2f5d50', '#5b7fa6', '#c8963e', '#a6825b', '#6e9c4f', '#a65b7f', '#8a6fbf', '#7a7a7a'];
-  const CATEGORY_CLASS = { 'Cash': 'Cash', 'Real estate': 'Real estate', 'Crypto': 'Crypto' };
+  // Each holding's mix by class: fund breakdown (by ticker) > its own Asset class > its category > Other.
+  function mixFor(i) {
+    if (i.ticker && breakdown[i.ticker]) return breakdown[i.ticker].mix;
+    if (i.assetClass) return { [i.assetClass]: 100 };
+    return { [CATEGORY_CLASS[i.category] || 'Other']: 100 };
+  }
+  // The bucket a holding mostly belongs to ('Multi-asset' when no bucket reaches 90%).
+  function mainBucket(i) {
+    const by = {};
+    for (const [c, w] of Object.entries(mixFor(i))) by[bucketOf(c)] = (by[bucketOf(c)] || 0) + w;
+    const [top, w] = Object.entries(by).sort((a, b) => b[1] - a[1])[0] || ['Other', 100];
+    return w >= 90 ? top : 'Multi-asset';
+  }
   let breakdown = {};   // ticker -> { mix: {class: pct}, asOf, source }
   async function atLoadBreakdown() {
     const manual = {}, auto = {};
@@ -183,8 +208,8 @@
       const j = await at(`${session.baseId}/${encodeURIComponent('Fund breakdown')}?${q}`);
       for (const r of j.records || []) {
         const f = r.fields || {};
-        const t = String(f['Fund ticker'] || '').trim().toUpperCase(), c = f['Asset class'], w = Number(f['Weight %']);
-        if (!TICKER_RE.test(t) || !CLASSES.includes(c) || !Number.isFinite(w) || w <= 0) continue;
+        const t = String(f['Fund ticker'] || '').trim().toUpperCase(), c = normClass(f['Asset class']), w = Number(f['Weight %']);
+        if (!TICKER_RE.test(t) || !c || !Number.isFinite(w) || w <= 0) continue;
         const bucket = String(f.Source || '').startsWith('Auto') ? auto : manual;
         const e = bucket[t] || (bucket[t] = { mix: {}, asOf: '', source: String(f.Source || '').slice(0, 80) });
         e.mix[c] = (e.mix[c] || 0) + w;
@@ -302,7 +327,8 @@
   function metaLine(i) {
     const sh = i.ticker && i.shares ? `${i.ticker} · ${new Intl.NumberFormat(undefined, { maximumFractionDigits: 4 }).format(i.shares)} sh` : i.ticker;
     const priced = i.pricedOn ? `priced ${i.pricedOn}` : '';
-    const bits = [i.accountType, i.fund, sh, i.owner, priced].filter(Boolean);
+    const cat = i.kind === 'asset' ? i.category : '';
+    const bits = [cat, i.accountType, i.fund !== i.name ? i.fund : '', sh, i.owner, priced].filter(Boolean);
     return bits.length ? `<div class="meta">${bits.map(b => `<span>${esc(b)}</span>`).join('')}</div>` : '';
   }
 
@@ -310,10 +336,13 @@
     const el = $(kind === 'asset' ? 'assets' : 'debts');
     const list = visible().filter(i => i.kind === kind);
     if (!list.length) { el.innerHTML = `<div class="empty">No ${kind}s yet.</div>`; return; }
-    el.innerHTML = catsFor(kind, list).map(cat => {
-      const g = list.filter(i => i.category === cat);
+    const groupOf = kind === 'asset' ? mainBucket : (i => i.category);
+    const groups = kind === 'asset' ? ['Multi-asset', ...BUCKETS] : catsFor(kind, list);
+    el.innerHTML = groups.map(cat => {
+      const g = list.filter(i => groupOf(i) === cat);
       if (!g.length) return '';
-      return `<div class="group"><div class="group-head"><span>${esc(cat)}</span><span class="amt">${esc(fmt(sum(g)))}</span></div>` +
+      const label = cat === 'Multi-asset' ? 'Multi-asset funds' : cat;
+      return `<div class="group"><div class="group-head"><span>${esc(label)}</span><span class="amt">${esc(fmt(sum(g)))}</span></div>` +
         g.map(i => `<div class="row"><div><div class="name">${esc(i.name)}</div>${metaLine(i)}${i.note ? `<div class="note">${esc(i.note)}</div>` : ''}</div>` +
           `<div class="amt">${esc(fmt(i.value))}</div><button class="icon-btn" type="button" data-edit="${esc(i.id)}" aria-label="Edit ${esc(i.name)}">✎</button></div>`).join('') +
         `</div>`;
@@ -321,7 +350,7 @@
   }
 
   function renderMix() {
-    const el = $('assetMix'); el.textContent = '';
+    const el = $('assetMix'); el.textContent = ''; return;  // replaced by the bucket panel
     const assets = visible().filter(i => i.kind === 'asset'), total = sum(assets);
     if (!total) return;
     const parts = catsFor('asset', assets).map((c, ix) => ({ c, v: sum(assets.filter(a => a.category === c)), col: COLORS[ix % COLORS.length] })).filter(p => p.v > 0);
@@ -343,34 +372,45 @@
     const sec = $('mixSection'), bar = $('lookBar'), tbl = $('lookTable');
     bar.textContent = ''; tbl.textContent = '';
     const assets = visible().filter(i => i.kind === 'asset');
-    const covered = assets.filter(i => i.ticker && breakdown[i.ticker]);
-    if (mode === 'locked' || !covered.length) { sec.hidden = true; return; }
+    if (mode === 'locked' || !assets.length) { sec.hidden = true; return; }
     const exp = Object.fromEntries(CLASSES.map(c => [c, 0]));
-    for (const i of assets) {
-      const mix = i.ticker && breakdown[i.ticker] ? breakdown[i.ticker].mix : { [CATEGORY_CLASS[i.category] || 'Other']: 100 };
-      for (const [c, w] of Object.entries(mix)) exp[c] += (Number(i.value) || 0) * w / 100;
-    }
+    for (const i of assets) for (const [c, w] of Object.entries(mixFor(i))) exp[c] = (exp[c] || 0) + (Number(i.value) || 0) * w / 100;
     const total = Object.values(exp).reduce((a, b) => a + b, 0);
     if (!total) { sec.hidden = true; return; }
-    const parts = CLASSES.map((c, ix) => ({ c, v: exp[c], col: CLASS_COLORS[ix] })).filter(p => p.v > 0.005);
+    const byBucket = Object.fromEntries(BUCKETS.map(b => [b, 0]));
+    for (const [c, v] of Object.entries(exp)) byBucket[bucketOf(c)] += v;
     const b = document.createElement('div'); b.className = 'bar';
-    for (const p of parts) {
-      const seg = document.createElement('div'); seg.style.width = (p.v / total * 100) + '%'; seg.style.background = p.col; seg.title = p.c; b.append(seg);
+    BUCKETS.forEach((bk, ix) => {
+      const v = byBucket[bk]; if (v <= 0.005) return;
+      const seg = document.createElement('div'); seg.className = 'bk-' + ix; seg.style.width = (v / total * 100) + '%'; seg.title = `${bk} ${(v / total * 100).toFixed(1)}%`; b.append(seg);
       const row = document.createElement('div'); row.className = 'look-row';
-      const dot = document.createElement('i'); dot.style.background = p.col;
-      const name = document.createElement('span'); name.textContent = p.c;
-      const amt = document.createElement('span'); amt.className = 'amt'; amt.textContent = fmt(p.v);
-      const pct = document.createElement('span'); pct.className = 'pct'; pct.textContent = (p.v / total * 100).toFixed(1) + '%';
+      const dot = document.createElement('i'); dot.className = 'bk-' + ix;
+      const name = document.createElement('span'); name.textContent = bk;
+      const amt = document.createElement('span'); amt.className = 'amt'; amt.textContent = fmt(v);
+      const pct = document.createElement('span'); pct.className = 'pct'; pct.textContent = (v / total * 100).toFixed(1) + '%';
       row.append(dot, name, amt, pct); tbl.append(row);
-    }
+      // US / International / Global detail for Equities and Bonds
+      const subs = CLASSES.filter(c => bucketOf(c) === bk && REGION_OF[c] && exp[c] > 0.005);
+      if (subs.length && !(subs.length === 1 && REGION_OF[subs[0]] === 'Global')) for (const c of subs) {
+        const sr = document.createElement('div'); sr.className = 'look-row look-sub';
+        const sp = document.createElement('i'), sn = document.createElement('span'), sa = document.createElement('span'), sq = document.createElement('span');
+        sn.textContent = REGION_OF[c] === 'Global' ? 'Global / unspecified' : REGION_OF[c];
+        sa.className = 'amt'; sa.textContent = fmt(exp[c]); sq.className = 'pct'; sq.textContent = (exp[c] / v * 100).toFixed(0) + '% of ' + bk.toLowerCase();
+        sr.append(sp, sn, sa, sq); tbl.append(sr);
+      }
+    });
     bar.append(b);
+    const covered = assets.filter(i => i.ticker && breakdown[i.ticker]);
+    const unsorted = assets.filter(i => mainBucket(i) === 'Other' && !i.assetClass).length;
     const dates = covered.map(i => breakdown[i.ticker].asOf).filter(Boolean).sort();
-    $('mixHint').textContent = `Looks through ${covered.length} fund holding${covered.length === 1 ? '' : 's'}` + (dates.length ? ` · compositions as of ${dates[0]}${dates[0] !== dates[dates.length - 1] ? '–' + dates[dates.length - 1] : ''}` : '');
+    $('mixHint').textContent = (covered.length ? `Looks through ${covered.length} fund holding${covered.length === 1 ? '' : 's'}` : 'By bucket')
+      + (dates.length ? ` · compositions as of ${dates[0]}${dates[0] !== dates[dates.length - 1] ? '–' + dates[dates.length - 1] : ''}` : '')
+      + (unsorted ? ` · ${unsorted} unsorted: use Tidy up` : '');
     sec.hidden = false;
   }
 
   // ---------- Projection ----------
-  const GROWTH_CATS = ['Investments', 'Retirement', 'Crypto', 'Other'];
+  const NO_GROWTH = ['Cash'];
   const P = prefs.proj = Object.assign({ years: 20, ret: 6, infl: 2.5, real: false }, prefs.proj || {});
   const clampNum = (v, lo, hi, d) => { const n = Number(v); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : d; };
 
@@ -378,7 +418,7 @@
   function project(list, years, defaultRet, infl, real) {
     const state = list.map(i => {
       const isDebt = i.kind === 'debt';
-      const rate = i.rate !== null && i.rate !== undefined ? i.rate : (isDebt ? 0 : (GROWTH_CATS.includes(i.category) ? defaultRet : 0));
+      const rate = i.rate !== null && i.rate !== undefined ? i.rate : (isDebt ? 0 : (NO_GROWTH.includes(mainBucket(i)) || ['Vehicles', 'Collectibles'].includes(i.category) ? 0 : defaultRet));
       return { isDebt, b: Number(i.value) || 0, rm: Math.pow(1 + rate / 100, 1 / 12) - 1, c: Number(i.monthly) || 0 };
     });
     const start = state.reduce((a, s) => a + (s.isDebt ? -s.b : s.b), 0);
@@ -478,7 +518,7 @@
       [String(yv), fmt(p.assets), fmt(p.debts), fmt(p.nw), fmt(p.nw - p.base)].forEach(t => { const td = document.createElement('td'); td.textContent = t; tr.append(td); }); tb.append(tr); }
     tbl.append(tb);
     const unset = list.filter(i => i.kind === 'asset' && (i.rate === null || i.rate === undefined)).length;
-    $('projNote').textContent = `Assets without their own expected return use ${P.ret}% if they're investments, retirement, crypto or other, and 0% otherwise (${unset} holding${unset === 1 ? '' : 's'} using a default). Debts grow at their interest rate and shrink by their monthly payment. Returns are compounded monthly and contributions added monthly${P.real ? `; values are shown in today's dollars at ${P.infl}% inflation` : ''}.`;
+    $('projNote').textContent = `Assets without their own expected return use ${P.ret}%, except cash and vehicles at 0% (${unset} holding${unset === 1 ? '' : 's'} using a default). Debts grow at their interest rate and shrink by their monthly payment. Returns are compounded monthly and contributions added monthly${P.real ? `; values are shown in today's dollars at ${P.infl}% inflation` : ''}.`;
   }
   const onProj = () => { P.years = Math.round(clampNum($('pYears').value, 1, 50, 20)); P.ret = clampNum($('pReturn').value, -20, 30, 6); P.infl = clampNum($('pInfl').value, 0, 20, 2.5); P.real = $('pReal').checked; savePrefs(); renderProjection(); };
   ['pYears', 'pReturn', 'pInfl'].forEach(id => $(id).addEventListener('change', onProj));
@@ -502,7 +542,7 @@
       ['totAssets', 'totDebts', 'totNet'].forEach(id => { $(id).textContent = '—'; });
       $('mixSection').hidden = true; $('projSection').hidden = true; $('projTip').hidden = true;
       [...$('projChart').querySelectorAll('svg')].forEach(n => n.remove()); $('projTable').textContent = ''; $('projHeadline').textContent = '';
-      ['assets', 'debts', 'assetMix', 'lookBar', 'lookTable', 'mixHint', 'fName', 'fNote', 'fVal', 'fAcct', 'fFund', 'fOwner', 'fTicker', 'fShares', 'fRate', 'fMonthly', 'acctList', 'ownerList', 'fundList']
+      ['assets', 'debts', 'assetMix', 'lookBar', 'lookTable', 'mixHint', 'fName', 'fNote', 'fVal', 'fAcct', 'fFund', 'fOwner', 'fTicker', 'fShares', 'fRate', 'fMonthly', 'tidyList', 'acctList', 'ownerList', 'fundList']
         .forEach(id => { const el = $(id); if (el.tagName === 'INPUT') el.value = ''; else el.textContent = ''; });
       return;
     }
@@ -511,6 +551,7 @@
     $('totAssets').textContent = fmt(a);
     $('totDebts').textContent = fmt(d);
     $('totNet').textContent = fmt(a - d);
+    $('tidyBtn').hidden = !items.some(i => i.kind === 'asset');
     renderMix(); renderLookThrough(); renderProjection(); renderList('asset'); renderList('debt');
   }
 
@@ -519,6 +560,129 @@
     const label = btn.textContent; btn.disabled = true; btn.textContent = 'Working…';
     try { return await fn(); } finally { btn.disabled = false; btn.textContent = label; }
   }
+
+  function fillClassSelect(sel, value, autoLabel) {
+    sel.textContent = '';
+    const auto = document.createElement('option'); auto.value = ''; auto.textContent = autoLabel; sel.append(auto);
+    for (const bk of BUCKETS) {
+      const grp = document.createElement('optgroup'); grp.label = bk;
+      for (const c of CLASSES.filter(c => bucketOf(c) === bk)) { const o = document.createElement('option'); o.value = c; o.textContent = CLASS_LABEL[c] || c; grp.append(o); }
+      sel.append(grp);
+    }
+    sel.value = value || '';
+  }
+
+  async function updateMany(changes) {        // [{id, d}] — Airtable allows 10 records per request
+    if (mode !== 'airtable') { for (const { id, d } of changes) { const i = items.findIndex(x => x.id === id); if (i >= 0) items[i] = { id, ...d }; } saveLocal(); return; }
+    for (let k = 0; k < changes.length; k += 10) {
+      const chunk = changes.slice(k, k + 10);
+      if (chunk.some(c => !REC_RE.test(c.id))) throw new Error('Invalid record');
+      const j = await at(tablePath(session), { method: 'PATCH', body: { records: chunk.map(c => ({ id: c.id, fields: toFields(c.d) })), typecast: true } });
+      for (const r of j.records || []) { const i = items.findIndex(x => x.id === r.id); if (i >= 0) items[i] = fromRecord(r); }
+    }
+  }
+
+  // ---------- Tidy up: understand messy entries ----------
+  // Well-known tickers → class ('MIXED' = multi-asset fund). Matching is offline; nothing is sent anywhere.
+  const KNOWN_T = {};
+  const addT = (cls, list) => list.split(' ').forEach(t => { KNOWN_T[t] = cls; });
+  addT('US stocks', 'VTI VTSAX VTSMX VITSX VOO VFIAX VFINX SPY IVV SPLG ITOT SCHB SCHX SCHD SCHG SWTSX SWPPX FXAIX FSKAX FZROX QQQ QQQM VUG VTV VIG VYM MGK RSP IWM IWB IWV DIA USCL ESGU SUSA DSI VONE IUSG IUSV');
+  addT('International stocks', 'VXUS VTIAX VTSNX VEA VEU VWO VTMGX VFWAX VEMAX IXUS IEFA IEMG EFA EEM SCHF SCHE SWISX FTIHX FZILX FSPSX ACWX');
+  addT('Equities', 'VT VTWAX ACWI URTH');
+  addT('US bonds', 'BND VBTLX VBMFX AGG SCHZ FXNAX VTIP VTAPX BIV BSV BLV VGIT VGSH VGLT SHY IEF TLT GOVT MUB VTEB SWAGX TIP');
+  addT('International bonds', 'BNDX VTABX IAGG');
+  addT('Cash', 'VMFXX VMRXX SPAXX FDRXX FZFXX SWVXX SNSXX SGOV BIL');
+  addT('Property', 'REZ VNQ VGSLX SCHH IYR XLRE USRT RWR VNQI');
+  addT('Gold', 'IAU GLD GLDM SGOL IAUM AAAU BAR');
+  addT('Commodities', 'PDBA DBA DBC PDBC GSG COMT BCI SLV USO UNG CPER');
+  addT('Bitcoin', 'BTC IBIT FBTC GBTC BITB ARKB HODL BRRR EZBC');
+  addT('Crypto', 'ETHA ETHE FETH');
+  addT('MIXED', 'VTTSX VFIFX VFFVX VLXVX VTTHX VFORX VTIVX VTHRX VTWNX VTXVX VSCGX VASGX VBIAX AOR AOA AOM');
+  // Funds without a ticker that have a breakdown under a code (e.g. superannuation options).
+  const FUND_CODES = [[/aware\s*super/i, 'AWARE-HG']];
+
+  const RULES = [
+    [/bitcoin|\bbtc\b|satoshi/i, 'Bitcoin', 'mentions bitcoin'],
+    [/ethereum|\beth\b|crypto|solana/i, 'Crypto', 'mentions crypto'],
+    [/\bgold\b|bullion/i, 'Gold', 'mentions gold'],
+    [/silver|platinum|commodit|agricultur|\boil\b|natural gas|\bmetals?\b/i, 'Commodities', 'mentions commodities'],
+    [/real estate|\breit|propert|residential|rental|\bhouse\b|\bhome\b|apartment|\bcondo\b|\bland\b/i, 'Property', 'mentions real estate'],
+    [/treasur|\bbonds?\b|fixed income|\bcredit\b|\bgilts?\b|\bcds?\b|certificate of deposit/i, 'Bonds', 'mentions bonds'],
+    [/\bcash\b|savings|checking|current account|money market|\bdeposit|high[- ]yield|\bbank\b/i, 'Cash', 'looks like a bank or cash balance'],
+    [/international|world ex|ex[- ]us|emerging|developed markets|europe|asia|pacific|ftse all/i, 'International stocks', 'mentions international markets'],
+    [/s&p|total stock|total market|nasdaq|russell|msci usa|\bdow\b|\bu\.?s\.? (?:stock|equit|large|small|mid)/i, 'US stocks', 'mentions US stock markets'],
+    [/\bstocks?\b|equit|\bshares\b|index fund|\betf\b/i, 'Equities', 'mentions stocks or an ETF'],
+  ];
+  const MIXED_RE = /superannuation|\bsuper\b|401\s*\(?k|\bira\b|pension|target|lifecycle|life ?strategy|balanced|\b20[2-7]\d\b/i;
+
+  function suggest(i) {
+    const text = [i.name, i.fund, i.accountType].filter(Boolean).join(' ');
+    const all = text + ' ' + (i.category || '');
+    let ticker = i.ticker, tickerWhy = '';
+    if (!ticker) {
+      const m = /MUTF:\s*([A-Z0-9.]{2,6})/i.exec(text);
+      if (m) { ticker = m[1].toUpperCase(); tickerWhy = `found "${ticker}" in the name`; }
+    }
+    if (!ticker) {
+      for (const tok of text.split(/[^A-Za-z0-9.]+/)) {
+        const T = tok.toUpperCase();
+        if (T.length >= 3 && KNOWN_T[T]) { ticker = T; tickerWhy = `found ticker ${T} in the name`; break; }
+      }
+    }
+    if (!ticker) for (const [re, code] of FUND_CODES) if (re.test(all) && breakdown[code]) { ticker = code; tickerWhy = `matched to the ${code} fund breakdown`; break; }
+    const pct = mix => Object.entries(mix).map(([c, w]) => [bucketOf(c), w]).reduce((m, [b, w]) => (m[b] = (m[b] || 0) + w, m), {});
+    const fmtMix = mix => Object.entries(pct(mix)).sort((a, b) => b[1] - a[1]).map(([b, w]) => `${b} ${w.toFixed(1)}%`).join(', ');
+    if (ticker && breakdown[ticker]) return { ticker, cls: '', why: `${tickerWhy ? tickerWhy + '; ' : ''}${ticker} is split using its fund breakdown (${fmtMix(breakdown[ticker].mix)})`, conf: 'high' };
+    if (ticker && KNOWN_T[ticker] && KNOWN_T[ticker] !== 'MIXED') return { ticker, cls: KNOWN_T[ticker], why: `${tickerWhy ? tickerWhy + '; ' : ''}${ticker} is a known ${CLASS_LABEL[KNOWN_T[ticker]] || KNOWN_T[ticker]} fund`, conf: 'high' };
+    if (ticker && KNOWN_T[ticker] === 'MIXED') return { ticker, cls: '', why: `${ticker} is a multi-asset fund; the daily sync will look up its mix`, conf: 'medium' };
+    for (const [re, cls, why] of RULES) if (re.test(all)) {
+      if (cls === 'Equities' && MIXED_RE.test(all)) break;
+      return { ticker: ticker || '', cls, why: `${tickerWhy ? tickerWhy + '; ' : ''}${why}`, conf: 'medium' };
+    }
+    if (MIXED_RE.test(all)) return { ticker: ticker || '', cls: '', why: 'looks like a multi-asset retirement fund: add its mix in the Fund breakdown table (or a ticker)', conf: 'low' };
+    return { ticker: ticker || '', cls: '', why: "couldn't tell: choose a bucket", conf: 'low' };
+  }
+
+  let tidyRows = [];
+  function openTidy() {
+    const list = $('tidyList'); list.textContent = ''; $('tidyErr').textContent = '';
+    tidyRows = items.filter(i => i.kind === 'asset').map(i => ({ item: i, s: suggest(i) }));
+    for (const r of tidyRows) {
+      const { item: i, s } = r;
+      const changes = (s.ticker || '') !== (i.ticker || '') || (s.cls || '') !== (i.assetClass || '');
+      const row = document.createElement('div'); row.className = 'tidy-row' + (changes ? '' : ' same');
+      const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = changes; cb.setAttribute('aria-label', 'Apply to ' + i.name);
+      const body = document.createElement('div');
+      const nm = document.createElement('div'); nm.className = 't-name'; nm.textContent = i.name;
+      const was = document.createElement('div'); was.className = 't-was';
+      was.textContent = `Now: ${i.category || 'no category'} · ticker ${i.ticker || 'none'} · ${i.assetClass ? (CLASS_LABEL[i.assetClass] || i.assetClass) : 'no bucket set'} → shows under ${mainBucket(i) === 'Multi-asset' ? 'Multi-asset funds' : mainBucket(i)}`;
+      const inputs = document.createElement('div'); inputs.className = 't-inputs';
+      const tk = document.createElement('input'); tk.type = 'text'; tk.value = s.ticker || ''; tk.placeholder = 'Ticker'; tk.maxLength = 12; tk.setAttribute('aria-label', 'Ticker for ' + i.name);
+      const sel = document.createElement('select'); sel.setAttribute('aria-label', 'Bucket for ' + i.name);
+      fillClassSelect(sel, s.cls, 'Auto (fund breakdown / category)');
+      const why = document.createElement('div'); why.className = 't-why' + (s.conf === 'low' ? ' warn' : ''); why.textContent = 'Why: ' + s.why;
+      const touch = () => { cb.checked = true; row.classList.remove('same'); countTidy(); };
+      tk.addEventListener('input', touch); sel.addEventListener('change', touch); cb.addEventListener('change', countTidy);
+      inputs.append(tk, sel); body.append(nm, was, inputs, why); row.append(cb, body); list.append(row);
+      Object.assign(r, { cb, tk, sel });
+    }
+    countTidy();
+    $('tidyDlg').showModal();
+  }
+  function countTidy() { const n = tidyRows.filter(r => r.cb && r.cb.checked).length; $('tidyCount').textContent = `${n} of ${tidyRows.length} selected`; $('tidySave').disabled = !n; }
+  $('tidyBtn').onclick = openTidy;
+  $('tidySave').onclick = async () => {
+    const changes = [];
+    for (const r of tidyRows) {
+      if (!r.cb.checked) continue;
+      const t = r.tk.value.trim().toUpperCase();
+      if (t && !TICKER_RE.test(t)) { $('tidyErr').textContent = `"${r.tk.value}" isn't a valid ticker (letters, numbers, dots or dashes).`; return; }
+      const { id, ...rest } = r.item;
+      changes.push({ id, d: clean({ ...rest, ticker: t, assetClass: r.sel.value }) });
+    }
+    try { await busy($('tidySave'), () => updateMany(changes)); $('tidyDlg').close(); render(); showBanner(`Saved ${changes.length} holding${changes.length === 1 ? '' : 's'}.`, 'info'); }
+    catch (x) { $('tidyErr').textContent = x.message; }
+  };
 
   // ---------- Item dialog ----------
   let editingId = null, editKind = 'asset';
@@ -535,6 +699,8 @@
     $('fFund').value = item ? item.fund : '';
     $('fOwner').value = item ? item.owner : (ownerView || '');
     $('fTicker').value = item ? item.ticker : '';
+    $('fClassWrap').hidden = kind === 'debt';
+    fillClassSelect($('fClass'), item ? item.assetClass : '', item && item.ticker && breakdown[item.ticker] ? `Auto (${item.ticker} fund breakdown)` : 'Auto (from category)');
     $('fShares').value = item && item.shares !== null ? item.shares : '';
     $('fRate').value = item && item.rate !== null ? item.rate : '';
     $('fMonthly').value = item && item.monthly !== null ? item.monthly : '';
@@ -557,7 +723,8 @@
       name: $('fName').value, kind: editKind, category: $('fCat').value, value: v, note: $('fNote').value,
       accountType: $('fAcct').value, fund: $('fFund').value, owner: $('fOwner').value,
       ticker: $('fTicker').value, shares: $('fShares').value,
-      rate: $('fRate').value, monthly: $('fMonthly').value
+      rate: $('fRate').value, monthly: $('fMonthly').value,
+      assetClass: editKind === 'asset' ? $('fClass').value : ''
     });
     if ($('fRate').value !== '' && d.rate === null) { $('itemErr').textContent = 'Enter a rate between -50% and 50%.'; return; }
     if ($('fTicker').value.trim() && !d.ticker) { $('itemErr').textContent = 'Tickers are letters/numbers only, e.g. VTTSX.'; return; }
