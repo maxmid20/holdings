@@ -123,6 +123,7 @@
   let mode = parse(store.get(VAULT_KEY)) ? 'locked' : 'local'; // 'local' | 'locked' | 'airtable'
   let session = null; // { token, baseId, table } — kept in memory only while unlocked
   let items = mode === 'local' ? loadLocalItems() : [];
+  let expenses = mode === 'local' ? loadLocalExpenses() : [];   // monthly living expenses
   let lastActivity = Date.now();
   let failedUnlocks = 0;
 
@@ -130,7 +131,26 @@
     const s = parse(store.get(LOCAL_KEY));
     return s && Array.isArray(s.items) ? s.items.map(i => ({ id: String(i.id || uid()), ...clean(i) })) : [];
   }
-  function saveLocal() { store.set(LOCAL_KEY, JSON.stringify({ items })); }
+  function loadLocalExpenses() {
+    const s = parse(store.get(LOCAL_KEY));
+    return s && Array.isArray(s.expenses) ? s.expenses.map(e => ({ id: String(e.id || uid()), ...cleanExp(e) })) : [];
+  }
+  function saveLocal() { store.set(LOCAL_KEY, JSON.stringify({ items, expenses })); }
+
+  // A monthly living expense. Amount is per month in its currency; essential = needed even in an emergency.
+  const EXP_CATS = ['Housing', 'Utilities', 'Groceries', 'Transport', 'Insurance', 'Health', 'Debt payments', 'Childcare & education', 'Phone & internet', 'Subscriptions', 'Dining & entertainment', 'Travel', 'Other'];
+  function cleanExp(raw) {
+    const ess = raw && raw.essential;
+    return {
+      name: String((raw && raw.name) || '').trim().slice(0, 120) || 'Expense',
+      amount: posOrNull(raw && raw.amount),
+      currency: (c => PRICED.includes(c) ? BASE_CUR : c)(curOf(raw && raw.currency)),
+      category: String((raw && raw.category) || 'Other').trim().slice(0, 60) || 'Other',
+      essential: ess === true || /^(true|yes|y|1|essential)$/i.test(String(ess || '').trim()),
+      owner: String((raw && raw.owner) || '').trim().slice(0, 80),
+      note: String((raw && raw.note) || '').trim().slice(0, 300)
+    };
+  }
   function savePrefs() { store.set(PREF_KEY, JSON.stringify(prefs)); }
 
   // ---------- Airtable client ----------
@@ -298,10 +318,49 @@
     fx = await atLoadFx(); fxTableOk = true;
   }
 
+  // ---------- Expenses table ----------
+  const EXP_TABLE = 'Expenses';
+  let expTableOk = false;
+  const expPath = () => `${session.baseId}/${encodeURIComponent(EXP_TABLE)}`;
+  const fromExpRecord = r => ({ id: r.id, ...cleanExp({ name: r.fields.Name, amount: r.fields['Monthly amount'], currency: r.fields.Currency,
+    category: r.fields.Category, essential: r.fields.Essential, owner: r.fields.Owner, note: r.fields.Note }) });
+  const toExpFields = d => ({ Name: d.name, 'Monthly amount': d.amount, Currency: d.currency !== BASE_CUR ? d.currency : null,
+    Category: d.category, Essential: !!d.essential, Owner: d.owner || null, Note: d.note || null });
+  async function atLoadExpenses() {
+    const out = []; let offset = '';
+    for (let page = 0; page < 20; page++) {
+      const j = await at(`${expPath()}?pageSize=100${offset ? '&offset=' + encodeURIComponent(offset) : ''}`);
+      for (const r of j.records || []) if (REC_RE.test(r.id) && r.fields) out.push(fromExpRecord(r));
+      if (!j.offset) break;
+      offset = String(j.offset);
+    }
+    return out;
+  }
+  async function addExpense(d) {
+    if (mode === 'airtable') {
+      const j = await at(expPath(), { method: 'POST', body: { records: [{ fields: toExpFields(d) }], typecast: true } });
+      expenses.push(...(j.records || []).map(fromExpRecord));
+    } else { expenses.push({ id: uid(), ...d }); saveLocal(); }
+  }
+  async function updateExpense(id, d) {
+    if (mode === 'airtable') {
+      if (!REC_RE.test(id)) throw new Error('Invalid record');
+      const r = await at(`${expPath()}/${id}`, { method: 'PATCH', body: { fields: toExpFields(d), typecast: true } });
+      const k = expenses.findIndex(x => x.id === id); if (k >= 0) expenses[k] = fromExpRecord(r);
+    } else { const k = expenses.findIndex(x => x.id === id); if (k >= 0) expenses[k] = { id, ...d }; saveLocal(); }
+  }
+  async function removeExpense(id) {
+    if (mode === 'airtable') { if (!REC_RE.test(id)) throw new Error('Invalid record'); await at(`${expPath()}/${id}`, { method: 'DELETE' }); }
+    expenses = expenses.filter(x => x.id !== id);
+    if (mode === 'local') saveLocal();
+  }
+
   async function loadAirtable() {
     items = await atLoadAll();
     try { breakdown = await atLoadBreakdown(); }
     catch (x) { breakdown = {}; }                        // the table is optional; the app works without it
+    try { expenses = await atLoadExpenses(); expTableOk = true; }
+    catch (x) { expenses = []; expTableOk = false; }
     try { fx = await atLoadFx(); fxTableOk = true; }
     catch (x) { fx = {}; fxTableOk = false; }
   }
@@ -342,7 +401,7 @@
   // ---------- Lock / unlock ----------
   function lock(reason) {
     if (mode !== 'airtable') return;
-    session = null; items = []; breakdown = {}; fx = {}; mode = 'locked';
+    session = null; items = []; expenses = []; breakdown = {}; fx = {}; mode = 'locked';
     document.querySelectorAll('dialog[open]').forEach(d => d.close());
     clearSecrets();
     render();
@@ -537,6 +596,104 @@
     sec.hidden = false;
   }
 
+  // ---------- Emergency fund ----------
+  // Months of cover = emergency-fund holdings ÷ monthly spending, both in the display currency. By default the fund
+  // is every holding in the Cash bucket; you can pick holdings instead (kept in this browser's preferences).
+  const EF = prefs.ef = Object.assign({ mode: 'cash', ids: [] }, prefs.ef || {});
+  const efHoldings = () => {
+    const assets = visible().filter(i => i.kind === 'asset');
+    return EF.mode === 'custom' ? assets.filter(i => EF.ids.includes(i.id)) : assets.filter(i => mainBucket(i) === 'Cash');
+  };
+  const expView = () => expenses.map(e => { const v = e.amount === null ? null : conv(e.amount, e.currency); return { ...e, monthly: v, noFx: e.amount !== null && v === null }; });
+  const fmtMonths = m => m >= 100 ? '99+' : (m >= 10 ? Math.round(m).toString() : m.toFixed(1));
+
+  function renderEmergency() {
+    const sec = $('efSection'); if (mode === 'locked') { sec.hidden = true; return; }
+    sec.hidden = false;
+    const fund = efHoldings(), fundTotal = fund.reduce((a, i) => a + i.value, 0);
+    const ex = expView(), set = ex.filter(e => e.monthly !== null);
+    const essential = set.filter(e => e.essential).reduce((a, e) => a + e.monthly, 0), all = set.reduce((a, e) => a + e.monthly, 0);
+    const base = essential || all, m = base ? fundTotal / base : null;
+    $('efMonths').textContent = m === null ? '—' : fmtMonths(m);
+    $('efUnit').textContent = m === null ? '' : (m === 1 ? ' month' : ' months');
+    $('efSub').textContent = !ex.length ? 'Add your monthly living expenses below to see how long your emergency fund lasts.'
+      : !base ? 'Enter amounts for your expenses to see your months of cover.'
+        : `${fmt(fundTotal)} emergency fund ÷ ${fmt(base)}/month of ${essential ? 'essential' : 'total'} spending.`;
+    $('efAll').textContent = essential && all > essential ? `${fmtMonths(fundTotal / all)} months if you keep all spending (${fmt(all)}/month).` : '';
+    // meter: 0–12 months, marks at 3 and 6 (a common guideline)
+    const bar = $('efBar'); bar.textContent = '';
+    if (m !== null) {
+      const fill = document.createElement('div'); fill.className = 'ef-fill'; fill.style.width = Math.min(100, m / 12 * 100) + '%'; bar.append(fill);
+      for (const t of [3, 6]) { const k = document.createElement('i'); k.className = 'ef-tick'; k.style.left = (t / 12 * 100) + '%'; k.title = t + ' months'; bar.append(k); }
+    }
+    $('efScale').hidden = m === null;
+    $('efVerdict').textContent = m === null ? '' : m < 3 ? 'Below the common 3–6 month guideline.' : m <= 6 ? 'Within the common 3–6 month guideline.' : 'Above the common 3–6 month guideline.';
+    $('efFundInfo').textContent = (EF.mode === 'custom' ? `Counting ${fund.length} chosen holding${fund.length === 1 ? '' : 's'}` : `Counting your ${fund.length} cash holding${fund.length === 1 ? '' : 's'}`) + (ownerView ? ` for ${ownerView}` : '') + '. ';
+    // expense list grouped by category
+    const el = $('efList');
+    if (mode === 'airtable' && !expTableOk) { el.innerHTML = `<div class="empty">Your base has no “${esc(EXP_TABLE)}” table yet (see the README).</div>`; return; }
+    if (!ex.length) { el.innerHTML = '<div class="empty">No expenses yet.</div>'; return; }
+    const cats = [...EXP_CATS.filter(c => ex.some(e => e.category === c)), ...[...new Set(ex.map(e => e.category))].filter(c => !EXP_CATS.includes(c))];
+    el.innerHTML = cats.map(c => {
+      const g = ex.filter(e => e.category === c), sumG = g.reduce((a, e) => a + (e.monthly || 0), 0);
+      return `<div class="group"><div class="group-head"><span>${esc(c)}</span><span class="amt">${esc(fmt(sumG))}/mo</span></div>` +
+        g.map(e => `<div class="row"><div><div class="name">${esc(e.name)}${e.essential ? ' <span class="tag">Essential</span>' : ''}</div>` +
+          `${[e.owner, e.note].filter(Boolean).length ? `<div class="meta">${[e.owner, e.note].filter(Boolean).map(b => `<span>${esc(b)}</span>`).join('')}</div>` : ''}</div>` +
+          `<div><div class="amt">${e.amount === null ? '<span class="muted">not set</span>' : e.noFx ? '—' : esc(fmt(e.monthly))}</div>` +
+          `${e.amount !== null && e.currency !== dispCur() ? `<div class="native${e.noFx ? ' warn' : ''}">${esc(fmtIn(e.amount, e.currency))}${e.noFx ? ' · no rate' : ''}</div>` : ''}</div>` +
+          `<button class="icon-btn" type="button" data-exp="${esc(e.id)}" aria-label="Edit ${esc(e.name)}">✎</button></div>`).join('') + '</div>';
+    }).join('');
+  }
+
+  // expense dialog
+  let editingExp = null;
+  function openExpense(e) {
+    editingExp = e ? e.id : null;
+    $('expTitle').textContent = e ? 'Edit expense' : 'Add expense';
+    const cat = $('eCat'); cat.textContent = '';
+    for (const c of [...new Set([...EXP_CATS, ...(e && !EXP_CATS.includes(e.category) ? [e.category] : [])])]) { const o = document.createElement('option'); o.textContent = c; cat.append(o); }
+    $('eName').value = e ? e.name : ''; cat.value = e ? e.category : 'Housing';
+    $('eAmt').value = e && e.amount !== null ? e.amount : ''; $('eCur').value = e ? e.currency : (dispCur());
+    $('eEss').checked = e ? e.essential : true; $('eOwner').value = e ? e.owner : ''; $('eNote').value = e ? e.note : '';
+    $('expDel').hidden = !e; $('expErr').textContent = '';
+    $('expDlg').showModal();
+  }
+  $('expAdd').onclick = () => {
+    if (mode === 'airtable' && !expTableOk) return showBanner(`Your base has no “${EXP_TABLE}” table yet (see the README).`);
+    openExpense(null);
+  };
+  $('expForm').addEventListener('submit', async ev => {
+    ev.preventDefault();
+    if (!$('eName').value.trim()) { $('expErr').textContent = 'Please enter a name.'; return; }
+    if ($('eAmt').value !== '' && posOrNull($('eAmt').value) === null) { $('expErr').textContent = 'Enter a monthly amount of 0 or more.'; return; }
+    const d = cleanExp({ name: $('eName').value, amount: $('eAmt').value, currency: $('eCur').value, category: $('eCat').value,
+      essential: $('eEss').checked, owner: $('eOwner').value, note: $('eNote').value });
+    try { await busy($('expSave'), () => editingExp ? updateExpense(editingExp, d) : addExpense(d)); $('expDlg').close(); render(); }
+    catch (x) { $('expErr').textContent = x.message; }
+  });
+  $('expDel').onclick = async () => {
+    const e = expenses.find(x => x.id === editingExp);
+    if (!e || !confirm(`Delete “${e.name}”?`)) return;
+    try { await busy($('expDel'), () => removeExpense(e.id)); $('expDlg').close(); render(); }
+    catch (x) { $('expErr').textContent = x.message; }
+  };
+  // choose which holdings count as the emergency fund
+  function openEfPick() {
+    const list = $('efPickList'); list.textContent = '';
+    const assets = items.filter(i => i.kind === 'asset').map(i => visible().find(v => v.id === i.id) || i);
+    const chosen = EF.mode === 'custom' ? EF.ids : assets.filter(i => mainBucket(i) === 'Cash').map(i => i.id);
+    for (const i of assets) {
+      const row = document.createElement('label'); row.className = 'check';
+      const cb = document.createElement('input'); cb.type = 'checkbox'; cb.value = i.id; cb.checked = chosen.includes(i.id);
+      const t = document.createElement('span'); t.textContent = `${i.name} · ${mainBucket(i)}${i.value ? ' · ' + fmt(i.value) : ''}`;
+      row.append(cb, t); list.append(row);
+    }
+    $('efPickDlg').showModal();
+  }
+  $('efPick').onclick = openEfPick;
+  $('efPickCash').onclick = () => { EF.mode = 'cash'; EF.ids = []; savePrefs(); $('efPickDlg').close(); render(); };
+  $('efPickSave').onclick = () => { EF.mode = 'custom'; EF.ids = [...$('efPickList').querySelectorAll('input:checked')].map(c => c.value); savePrefs(); $('efPickDlg').close(); render(); };
+
   // ---------- Projection ----------
   const NO_GROWTH = ['Cash'];
   const P = prefs.proj = Object.assign({ years: 20, ret: 6, infl: 2.5, real: false }, prefs.proj || {});
@@ -668,9 +825,9 @@
     if (locked) {
       ownerView = '';
       ['totAssets', 'totDebts', 'totNet'].forEach(id => { $(id).textContent = '—'; });
-      $('mixSection').hidden = true; $('retSection').hidden = true; $('projSection').hidden = true; $('projTip').hidden = true; $('fxNote').hidden = true;
+      $('mixSection').hidden = true; $('retSection').hidden = true; $('efSection').hidden = true; $('projSection').hidden = true; $('projTip').hidden = true; $('fxNote').hidden = true;
       [...$('projChart').querySelectorAll('svg')].forEach(n => n.remove()); $('projTable').textContent = ''; $('projHeadline').textContent = '';
-      ['assets', 'debts', 'assetMix', 'lookBar', 'lookTable', 'mixHint', 'fName', 'fNote', 'fVal', 'fAcct', 'fFund', 'fOwner', 'fTicker', 'fShares', 'fRate', 'fMonthly', 'fRet12', 'fRet5', 'fRetHint', 'retTable', 'retAll', 'retAllSub', 'retFunds', 'retFundsSub', 'retNote', 'tidyList', 'fxList', 'fxText', 'acctList', 'ownerList', 'fundList']
+      ['assets', 'debts', 'assetMix', 'lookBar', 'lookTable', 'mixHint', 'fName', 'fNote', 'fVal', 'fAcct', 'fFund', 'fOwner', 'fTicker', 'fShares', 'fRate', 'fMonthly', 'fRet12', 'fRet5', 'fRetHint', 'retTable', 'retAll', 'retAllSub', 'retFunds', 'retFundsSub', 'retNote', 'efList', 'efMonths', 'efUnit', 'efSub', 'efAll', 'efBar', 'efVerdict', 'efFundInfo', 'efPickList', 'eName', 'eAmt', 'eOwner', 'eNote', 'tidyList', 'fxList', 'fxText', 'acctList', 'ownerList', 'fundList']
         .forEach(id => { const el = $(id); if (el.tagName === 'INPUT') el.value = ''; else el.textContent = ''; });
       return;
     }
@@ -681,7 +838,7 @@
     $('totNet').textContent = fmt(a - d);
     $('tidyBtn').hidden = !items.some(i => i.kind === 'asset');
     renderFxNote(vis);
-    renderMix(); renderLookThrough(); renderReturns(); renderProjection(); renderList('asset'); renderList('debt');
+    renderMix(); renderLookThrough(); renderReturns(); renderEmergency(); renderProjection(); renderList('asset'); renderList('debt');
   }
 
   // Generic busy wrapper for form buttons
@@ -902,13 +1059,14 @@
     const t = e.target instanceof Element ? e.target : null; if (!t) return;
     const close = t.closest('[data-close]'); if (close) { close.closest('dialog').close(); clearSecrets(); return; }
     const add = t.closest('[data-add]'); if (add) { openItem(add.dataset.add); return; }
+    const ex = t.closest('[data-exp]'); if (ex) { const e = expenses.find(x => x.id === ex.dataset.exp); if (e) openExpense(e); return; }
     const ed = t.closest('[data-edit]'); if (ed) { const it = items.find(i => i.id === ed.dataset.edit); if (it) openItem(it.kind, it); }
   });
 
   // ---------- Connect / unlock / disconnect ----------
   $('connBtn').onclick = () => {
     if (mode === 'local') {
-      const n = items.length;
+      const n = items.length + expenses.length;
       $('cUploadRow').hidden = n === 0; $('cUploadN').textContent = n;
       $('connectErr').textContent = '';
       $('connectDlg').showModal();
@@ -933,6 +1091,7 @@
     if (pass !== pass2) return err('The passphrases don’t match.');
     if (pass === token) return err('Your passphrase must be different from the token.');
     const upload = !$('cUploadRow').hidden && $('cUpload').checked ? items.map(clean) : [];
+    const uploadExp = !$('cUploadRow').hidden && $('cUpload').checked ? expenses.map(cleanExp) : [];
     try {
       await busy($('connectSave'), async () => {
         session = { token, baseId, table };
@@ -941,7 +1100,9 @@
           await at(`${tablePath(session)}?pageSize=1`); // verify token, base and table
           const box = await seal(session, pass);
           if (!store.set(VAULT_KEY, JSON.stringify(box))) throw new Error('This browser blocked local storage, so the connection can’t be saved.');
-          if (upload.length) { await atCreateMany(upload); store.del(LOCAL_KEY); }
+          if (upload.length) await atCreateMany(upload);
+          for (let k = 0; k < uploadExp.length; k += 10) await at(expPath(), { method: 'POST', body: { records: uploadExp.slice(k, k + 10).map(d => ({ fields: toExpFields(d) })), typecast: true } });
+          if (upload.length || uploadExp.length) store.del(LOCAL_KEY);
           await loadAirtable();
         } catch (x) { session = null; mode = prevMode; throw x; }
       });
@@ -953,7 +1114,7 @@
   $('unlockForm').addEventListener('submit', async e => {
     e.preventDefault();
     const box = parse(store.get(VAULT_KEY));
-    if (!box) { mode = 'local'; items = loadLocalItems(); $('unlockDlg').close(); render(); return; }
+    if (!box) { mode = 'local'; items = loadLocalItems(); expenses = loadLocalExpenses(); $('unlockDlg').close(); render(); return; }
     try {
       await busy($('unlockSave'), async () => {
         if (failedUnlocks >= 3) await sleep(Math.min(30000, 1000 * 2 ** (failedUnlocks - 2)));
@@ -971,7 +1132,7 @@
 
   function disconnect() {
     if (!confirm('Disconnect Airtable on this device? Your data stays in Airtable, and the encrypted token is erased from this browser. You can reconnect anytime with a token.')) return;
-    store.del(VAULT_KEY); session = null; breakdown = {}; mode = 'local'; items = loadLocalItems(); fx = localFx();
+    store.del(VAULT_KEY); session = null; breakdown = {}; mode = 'local'; items = loadLocalItems(); expenses = loadLocalExpenses(); fx = localFx();
     document.querySelectorAll('dialog[open]').forEach(d => d.close()); clearSecrets(); render();
     showBanner('Disconnected. For extra safety, you can also revoke the token at airtable.com/create/tokens.', 'info');
   }
@@ -983,6 +1144,7 @@
   const cur = $('currency');
   for (const c of CURRENCIES) {
     const o = document.createElement('option'); o.value = c; o.textContent = CUR_LABEL[c] || c; $('fCur').append(o);
+    if (!PRICED.includes(c)) { const x = document.createElement('option'); x.value = c; x.textContent = c; $('eCur').append(x); }
     if (DISPLAY_CURRENCIES.includes(c)) { const d = document.createElement('option'); d.textContent = c; cur.append(d); }
   }
   cur.value = prefs.currency;
@@ -1062,7 +1224,7 @@
   $('exportBtn').onclick = () => {
     if (mode === 'locked') return;
     if (!confirm('The backup file will contain your balances unencrypted. Keep it somewhere safe. Continue?')) return;
-    const data = { app: 'holdings', version: 2, exported: new Date().toISOString(), items: items.map(({ id, ...rest }) => rest) };
+    const data = { app: 'holdings', version: 2, exported: new Date().toISOString(), items: items.map(({ id, ...rest }) => rest), expenses: expenses.map(({ id, ...rest }) => rest) };
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
     a.download = `holdings-${new Date().toISOString().slice(0, 10)}.json`;
@@ -1073,18 +1235,22 @@
     const f = e.target.files[0]; e.target.value = '';
     if (!f) return;
     if (f.size > 5 * 1024 * 1024) return showBanner('That file is too large to be a Holdings backup.');
-    let list;
-    try { const s = JSON.parse(await f.text()); if (!Array.isArray(s.items) || s.items.length > 5000) throw 0; list = s.items.map(clean); }
+    let list, expList = [];
+    try {
+      const s = JSON.parse(await f.text()); if (!Array.isArray(s.items) || s.items.length > 5000) throw 0; list = s.items.map(clean);
+      if (Array.isArray(s.expenses) && s.expenses.length <= 2000) expList = s.expenses.map(cleanExp);
+    }
     catch (x) { return showBanner('That file isn’t a valid Holdings backup.'); }
     try {
       if (mode === 'airtable') {
         if (!confirm(`Add ${list.length} items to Airtable?`)) return;
         showBanner(`Uploading ${list.length} items…`, 'info');
         items.push(...await atCreateMany(list));
-        showBanner(`Added ${list.length} items to Airtable.`, 'info');
+        for (const d of expList) await addExpense(d);
+        showBanner(`Added ${list.length} items${expList.length ? ` and ${expList.length} expenses` : ''} to Airtable.`, 'info');
       } else {
         if (!confirm('Replace the data in this browser with this file?')) return;
-        items = list.map(d => ({ id: uid(), ...d })); saveLocal();
+        items = list.map(d => ({ id: uid(), ...d })); expenses = expList.map(d => ({ id: uid(), ...d })); saveLocal();
       }
       render();
     } catch (x) { showBanner(x.message); render(); }

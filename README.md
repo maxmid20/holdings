@@ -70,6 +70,15 @@ Each holding can show its **12-month** and **5-year (per year)** total return, m
 
 The asset list shows each holding's returns and a value-weighted 12-month return for each bucket. The **Returns** panel gives two overall figures: **all assets** (every asset at its value: cash earns its interest rate, and anything without a figure counts as 0% and is called out) and **invested holdings only** (just the holdings with a return), plus a table of how much each group adds. These describe the funds' past performance, not your own money-weighted return, and the projection doesn't use them. The edit form has a **Use the 5-year average** link if you want to copy that figure into the holding's Expected return.
 
+## Emergency fund
+
+The **Emergency fund** section answers "how many months could I live on my emergency fund?"
+
+- **Monthly living expenses** live in an **Expenses** table: `Name` (primary), `Monthly amount` (Number, 2 dp), `Currency` (text, blank = USD), `Category` (text), `Essential` (Checkbox), `Owner` and `Note` (text). Add and edit them in the app or in Airtable. For yearly or quarterly bills, enter the monthly equivalent.
+- **Months of cover** = your emergency fund ÷ your monthly **essential** spending (or all spending, if nothing is marked essential). The app also shows how long it lasts if you kept all spending.
+- **The emergency fund** is every holding in the Cash bucket by default (in any currency). Use **Choose holdings** to pick exactly which holdings count; that choice is saved in your browser.
+- A meter shows 0–12 months, marking the common 3–6 month guideline.
+
 ## Projection
 
 The **Projection** panel projects every holding forward, month by month:

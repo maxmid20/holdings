@@ -166,3 +166,17 @@ dialog.wide{width:min(760px,calc(100vw - 32px))}
 .ret-table td:first-child,.ret-table th:first-child{text-align:left}
 .ret-table tr.ret-total td{font-weight:650;border-top:2px solid var(--line)}
 @media (max-width:520px){.ret-stats{grid-template-columns:1fr}.ret-big{font-size:24px}}
+/* Emergency fund */
+.ef-big{font-size:36px;font-weight:650;font-variant-numeric:tabular-nums;line-height:1.1;margin:2px 0 4px}
+.ef-unit{font-size:18px;font-weight:500;color:var(--muted)}
+.ef-bar{position:relative;height:10px;border-radius:5px;background:var(--surface-2);margin:12px 0 4px;overflow:hidden}
+.ef-fill{position:absolute;inset:0 auto 0 0;background:var(--s1);border-radius:5px 4px 4px 5px}
+.ef-tick{position:absolute;top:0;bottom:0;width:2px;background:var(--surface);opacity:.9}
+.ef-scale{position:relative;display:flex;justify-content:space-between;font-size:11px;color:var(--muted);height:14px}
+.ef-scale .ef-s3,.ef-scale .ef-s6{position:absolute;transform:translateX(-50%)}
+.ef-scale .ef-s3{left:25%}.ef-scale .ef-s6{left:50%}
+.ef-verdict{margin:8px 0 4px;font-size:14px}
+.sub-head{font-size:15px;margin:18px 0 8px}
+.tag{display:inline-block;font-size:11px;font-weight:500;padding:1px 6px;border-radius:999px;background:var(--surface-2);color:var(--muted);vertical-align:1px;margin-left:4px}
+.muted{color:var(--muted)}
+.ef-pick{display:grid;gap:6px;max-height:50vh;overflow:auto;margin:6px 0 10px}

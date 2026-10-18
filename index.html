@@ -6,8 +6,8 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://api.airtable.com; form-action 'none'; base-uri 'none'; object-src 'none'">
 <meta name="referrer" content="no-referrer">
 <title>Holdings</title>
-<link rel="stylesheet" href="styles.css?v=2026-10-18f">
-<script src="app.js?v=2026-10-18f" defer></script>
+<link rel="stylesheet" href="styles.css?v=2026-10-18g">
+<script src="app.js?v=2026-10-18g" defer></script>
 </head>
 <body>
 <div class="wrap">
@@ -56,6 +56,21 @@
         <div class="proj-table-wrap"><table class="proj-table ret-table" id="retTable"></table></div>
         <p class="hint" id="retNote"></p>
       </div>
+    </div>
+    <div class="section" id="efSection" hidden>
+      <div class="section-head"><h2>Emergency fund</h2><button class="btn primary" type="button" id="expAdd">+ Add expense</button></div>
+      <div class="card">
+        <div class="label">Months of cover</div>
+        <div class="ef-big"><span id="efMonths">—</span><span class="ef-unit" id="efUnit"></span></div>
+        <p class="hint" id="efSub"></p>
+        <div class="ef-bar" id="efBar" role="img" aria-label="Months of cover on a 0 to 12 month scale"></div>
+        <div class="ef-scale" id="efScale" hidden><span>0</span><span class="ef-s3">3</span><span class="ef-s6">6</span><span>12 months</span></div>
+        <p class="ef-verdict" id="efVerdict"></p>
+        <p class="hint" id="efAll"></p>
+        <p class="hint"><span id="efFundInfo"></span><button type="button" class="link-btn" id="efPick">Choose holdings</button></p>
+      </div>
+      <h3 class="sub-head">Monthly living expenses</h3>
+      <div id="efList"></div>
     </div>
     <div class="section" id="projSection">
       <div class="section-head"><h2>Projection</h2><span class="hint">Estimates, not guarantees</span></div>
@@ -184,6 +199,45 @@
     <span class="spacer"></span>
     <button type="button" class="btn" data-close>Cancel</button>
     <button type="button" class="btn primary" id="tidySave">Save changes</button>
+  </div>
+</dialog>
+
+<!-- Add / edit expense -->
+<dialog id="expDlg">
+  <form id="expForm" novalidate>
+    <h3 id="expTitle">Add expense</h3>
+    <div class="field"><label for="eName">Name</label><input id="eName" maxlength="120" placeholder="e.g. Rent" autocomplete="off"></div>
+    <div class="field-row val-row">
+      <div class="field"><label for="eAmt">Monthly amount</label><input id="eAmt" type="number" step="any" min="0" inputmode="decimal" placeholder="0"></div>
+      <div class="field"><label for="eCur">Currency</label><select id="eCur"></select></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label for="eCat">Category</label><select id="eCat"></select></div>
+      <div class="field"><label for="eOwner">Owner (optional)</label><input id="eOwner" maxlength="80" list="ownerList" placeholder="e.g. Joint" autocomplete="off"></div>
+    </div>
+    <label class="check"><input type="checkbox" id="eEss" checked> <span><strong>Essential</strong>: I’d still pay this in an emergency (rent, food, insurance…). Months of cover are based on essential spending.</span></label>
+    <div class="field"><label for="eNote">Note (optional)</label><input id="eNote" maxlength="300" autocomplete="off" placeholder="e.g. Paid quarterly, ÷3"></div>
+    <p class="hint">For yearly or quarterly bills, enter the monthly equivalent.</p>
+    <p class="form-err" id="expErr"></p>
+    <div class="actions">
+      <button type="button" class="btn danger" id="expDel" hidden>Delete</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn" data-close>Cancel</button>
+      <button type="submit" class="btn primary" id="expSave">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Choose emergency fund holdings -->
+<dialog id="efPickDlg">
+  <h3>What counts as your emergency fund?</h3>
+  <p class="sub">By default, every holding in the Cash bucket. Pick holdings yourself if some cash isn’t really available, or if you’d count other things. Your choice is saved in this browser.</p>
+  <div class="ef-pick" id="efPickList"></div>
+  <div class="actions">
+    <button type="button" class="btn" id="efPickCash">Use all cash holdings</button>
+    <span class="spacer"></span>
+    <button type="button" class="btn" data-close>Cancel</button>
+    <button type="button" class="btn primary" id="efPickSave">Save</button>
   </div>
 </dialog>
 
