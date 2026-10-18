@@ -6,8 +6,8 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://api.airtable.com; form-action 'none'; base-uri 'none'; object-src 'none'">
 <meta name="referrer" content="no-referrer">
 <title>Holdings</title>
-<link rel="stylesheet" href="styles.css?v=2026-10-18d">
-<script src="app.js?v=2026-10-18d" defer></script>
+<link rel="stylesheet" href="styles.css?v=2026-10-18e">
+<script src="app.js?v=2026-10-18e" defer></script>
 </head>
 <body>
 <div class="wrap">
@@ -44,6 +44,17 @@
       <div class="card">
         <div id="lookBar"></div>
         <div id="lookTable"></div>
+      </div>
+    </div>
+    <div class="section" id="retSection" hidden>
+      <div class="section-head"><h2>Returns</h2><span class="hint">Last 12 months · past returns, not a forecast</span></div>
+      <div class="card">
+        <div class="ret-stats">
+          <div><div class="label">All assets</div><div class="ret-big" id="retAll"></div><div class="hint" id="retAllSub"></div></div>
+          <div><div class="label">Invested holdings only</div><div class="ret-big" id="retFunds"></div><div class="hint" id="retFundsSub"></div></div>
+        </div>
+        <div class="proj-table-wrap"><table class="proj-table ret-table" id="retTable"></table></div>
+        <p class="hint" id="retNote"></p>
       </div>
     </div>
     <div class="section" id="projSection">

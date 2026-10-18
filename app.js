@@ -432,15 +432,63 @@
     }).join('');
   }
 
-  function renderMix() {
-    const el = $('assetMix'); el.textContent = '';   // now a one-line summary of trailing returns
-    const assets = visible().filter(i => i.kind === 'asset'), w = wRet(assets);
-    if (w.r === null) return;
-    const dates = assets.map(i => i.retAsOf).filter(Boolean).sort();
-    const p = document.createElement('p'); p.className = 'ret-summary';
-    const b = document.createElement('strong'); b.textContent = fmtPct(w.r);
-    p.append('12-month return, weighted by value: ', b, ` across ${w.n} of ${w.of} holdings` + (dates.length ? ` (to ${dates[dates.length - 1]})` : '') + '. Past returns, not a forecast.');
-    el.append(p);
+  function renderMix() { $('assetMix').textContent = ''; }   // superseded by the Returns panel
+
+  // ---------- Returns panel ----------
+  // Every asset counts at its value. A holding's 12-month return is its published/synced figure; cash without one
+  // earns its interest rate (its Expected return); anything else without a figure counts as 0% and is called out.
+  function retOf(i) {
+    if (i.ret12 !== null && i.ret12 !== undefined) return { r: i.ret12, how: 'return' };
+    if (mainBucket(i) === 'Cash' && i.rate !== null && i.rate !== undefined) return { r: i.rate, how: 'rate' };
+    return { r: null, how: 'none' };
+  }
+  function renderReturns() {
+    const sec = $('retSection'), tbl = $('retTable'); tbl.textContent = '';
+    const assets = visible().filter(i => i.kind === 'asset' && i.value > 0);
+    const total = assets.reduce((a, i) => a + i.value, 0);
+    const funds = wRet(assets);
+    if (mode === 'locked' || !total || (funds.r === null && !assets.some(i => retOf(i).r !== null))) { sec.hidden = true; return; }
+    let pts = 0, missing = 0, rated = 0;
+    const groups = {};
+    for (const i of assets) {
+      const { r, how } = retOf(i), g = mainBucket(i);
+      const e = groups[g] || (groups[g] = { v: 0, s: 0, miss: 0, rate: 0 });
+      e.v += i.value; e.s += i.value * (r || 0);
+      if (how === 'none') { e.miss += i.value; missing += i.value; }
+      if (how === 'rate') { e.rate += i.value; rated += i.value; }
+      pts += i.value * (r || 0);
+    }
+    const all = pts / total;
+    $('retAll').textContent = fmtPct(all);
+    $('retAllSub').textContent = `Weighted by value across all ${assets.length} assets (${fmt(total)}).`;
+    $('retFunds').textContent = funds.r === null ? '—' : fmtPct(funds.r);
+    const r5 = (() => { const h = assets.filter(i => i.ret5 !== null && i.ret5 !== undefined); const w = h.reduce((a, i) => a + i.value, 0); return w ? h.reduce((a, i) => a + i.value * i.ret5, 0) / w : null; })();
+    const cov = assets.filter(i => i.ret12 !== null && i.ret12 !== undefined).reduce((a, i) => a + i.value, 0);
+    $('retFundsSub').textContent = funds.r === null ? 'No holdings have a 12-month return yet.'
+      : `${funds.n} holdings, ${Math.round(cov / total * 100)}% of assets` + (r5 !== null ? ` · 5-yr ${fmtPct(r5)}/yr` : '') + '.';
+    const hr = document.createElement('tr');
+    ['Group', 'Share', '12-mo', 'Adds'].forEach(t => { const th = document.createElement('th'); th.textContent = t; hr.append(th); });
+    const thead = document.createElement('thead'); thead.append(hr); tbl.append(thead);
+    const tb = document.createElement('tbody');
+    for (const g of ['Multi-asset', ...BUCKETS].filter(g => groups[g]).sort((a, b) => groups[b].v - groups[a].v)) {
+      const e = groups[g], tr = document.createElement('tr');
+      const ret = e.miss / e.v > 0.95 ? 'no data' : fmtPct(e.s / e.v) + (e.rate ? '*' : '') + (e.miss ? '†' : '');
+      [g === 'Multi-asset' ? 'Multi-asset funds' : g, Math.round(e.v / total * 100) + '%', ret, fmtPct(e.s / total).replace('%', ' pts')]
+        .forEach(t => { const td = document.createElement('td'); td.textContent = t; tr.append(td); });
+      tb.append(tr);
+    }
+    const tr = document.createElement('tr'); tr.className = 'ret-total';
+    ['Total', '100%', fmtPct(all), fmtPct(all).replace('%', ' pts')].forEach(t => { const td = document.createElement('td'); td.textContent = t; tr.append(td); });
+    tb.append(tr); tbl.append(tb);
+    const notes = [];
+    if (rated) notes.push('* Cash uses each account’s interest rate (its Expected return).');
+    if (missing) {
+      const names = Object.entries(groups).filter(([, e]) => e.miss).sort((a, b) => b[1].miss - a[1].miss).map(([g]) => g === 'Multi-asset' ? 'multi-asset' : g.toLowerCase());
+      notes.push(`† ${Math.round(missing / total * 100)}% of assets (${names.join(', ')}) have no 12-month figure and count as 0%. Add one in each holding’s edit form; every 1% on them moves the total by ${(missing / total).toFixed(2)} points.`);
+    }
+    notes.push('Fund performance, not your personal (money-weighted) return. Holdings in other currencies use their own-currency returns.');
+    $('retNote').textContent = notes.join(' ');
+    sec.hidden = false;
   }
 
   function renderLookThrough() {
@@ -615,9 +663,9 @@
     if (locked) {
       ownerView = '';
       ['totAssets', 'totDebts', 'totNet'].forEach(id => { $(id).textContent = '—'; });
-      $('mixSection').hidden = true; $('projSection').hidden = true; $('projTip').hidden = true; $('fxNote').hidden = true;
+      $('mixSection').hidden = true; $('retSection').hidden = true; $('projSection').hidden = true; $('projTip').hidden = true; $('fxNote').hidden = true;
       [...$('projChart').querySelectorAll('svg')].forEach(n => n.remove()); $('projTable').textContent = ''; $('projHeadline').textContent = '';
-      ['assets', 'debts', 'assetMix', 'lookBar', 'lookTable', 'mixHint', 'fName', 'fNote', 'fVal', 'fAcct', 'fFund', 'fOwner', 'fTicker', 'fShares', 'fRate', 'fMonthly', 'fRet12', 'fRet5', 'fRetHint', 'tidyList', 'fxList', 'fxText', 'acctList', 'ownerList', 'fundList']
+      ['assets', 'debts', 'assetMix', 'lookBar', 'lookTable', 'mixHint', 'fName', 'fNote', 'fVal', 'fAcct', 'fFund', 'fOwner', 'fTicker', 'fShares', 'fRate', 'fMonthly', 'fRet12', 'fRet5', 'fRetHint', 'retTable', 'retAll', 'retAllSub', 'retFunds', 'retFundsSub', 'retNote', 'tidyList', 'fxList', 'fxText', 'acctList', 'ownerList', 'fundList']
         .forEach(id => { const el = $(id); if (el.tagName === 'INPUT') el.value = ''; else el.textContent = ''; });
       return;
     }
@@ -628,7 +676,7 @@
     $('totNet').textContent = fmt(a - d);
     $('tidyBtn').hidden = !items.some(i => i.kind === 'asset');
     renderFxNote(vis);
-    renderMix(); renderLookThrough(); renderProjection(); renderList('asset'); renderList('debt');
+    renderMix(); renderLookThrough(); renderReturns(); renderProjection(); renderList('asset'); renderList('debt');
   }
 
   // Generic busy wrapper for form buttons

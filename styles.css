@@ -159,3 +159,10 @@ dialog.wide{width:min(760px,calc(100vw - 32px))}
 .ret-summary strong{color:var(--text);font-variant-numeric:tabular-nums}
 .use5{display:block;margin:-6px 0 12px;font-size:13px}
 .ret-hint{margin:-6px 0 12px}
+/* Returns panel */
+.ret-stats{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:6px}
+.ret-stats .label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.ret-big{font-size:28px;font-weight:650;font-variant-numeric:tabular-nums;margin:2px 0}
+.ret-table td:first-child,.ret-table th:first-child{text-align:left}
+.ret-table tr.ret-total td{font-weight:650;border-top:2px solid var(--line)}
+@media (max-width:520px){.ret-stats{grid-template-columns:1fr}.ret-big{font-size:24px}}

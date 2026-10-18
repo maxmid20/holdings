@@ -68,7 +68,7 @@ Funds without a ticker can still be split: add rows to Fund breakdown under a co
 
 Each holding can show its **12-month** and **5-year (per year)** total return, measured to the last month-end with dividends reinvested, like a fund factsheet. The daily sync calculates them once a month from Alpha Vantage's monthly prices for any holding with a ticker, and for bitcoin. For holdings without a ticker (a super fund, a savings account), type the published figures into the holding's edit form.
 
-The asset list shows each holding's returns, a value-weighted 12-month return for each bucket, and one for everything. These describe the funds' past performance, not your own money-weighted return, and the projection doesn't use them. The edit form has a **Use the 5-year average** link if you want to copy that figure into the holding's Expected return.
+The asset list shows each holding's returns and a value-weighted 12-month return for each bucket. The **Returns** panel gives two overall figures: **all assets** (every asset at its value: cash earns its interest rate, and anything without a figure counts as 0% and is called out) and **invested holdings only** (just the holdings with a return), plus a table of how much each group adds. These describe the funds' past performance, not your own money-weighted return, and the projection doesn't use them. The edit form has a **Use the 5-year average** link if you want to copy that figure into the holding's Expected return.
 
 ## Projection
 
