@@ -30,6 +30,8 @@ Create a new base, for example "Holdings", with one table named **`Items`** and 
 | `Expected return %` | Number (2 dp, negatives allowed), optional. For a debt, this is its interest rate |
 | `Monthly contribution` | Number (2 dp), optional. For a debt, this is its monthly payment |
 | `Currency` | Single line text, optional. A currency code: USD, AUD, EUR, GBP, CAD, NZD, JPY, CHF, SGD, HKD, INR, or BTC for bitcoin held directly (Value = the number of coins, e.g. 0.25). Blank means USD. `Value` and `Monthly contribution` are in this currency |
+| `12-month return %`, `5-year return %` | Number (2 dp, negatives allowed), optional. Trailing total returns; the 5-year figure is per year. Filled in monthly by the daily sync for holdings with a ticker or in BTC, or typed by you |
+| `Return as of`, `Return source` | Single line text, written with the returns (`Auto (…)` from the sync, `Manual` if you typed them; the sync never overwrites Manual) |
 | `Asset class` | Single line text, optional. One of: US stocks, International stocks, Equities, US bonds, International bonds, Bonds, Cash, Property, Gold, Commodities, Bitcoin, Crypto, Other. Set by **Tidy up** or the Bucket picker |
 
 ## Currencies
@@ -61,6 +63,12 @@ Each holding's bucket comes from, in order:
 **Tidy up** (next to "+ Add asset") reads each holding's name, category and account, pulls out tickers buried in names ("Gold IAU ISHARES…" → IAU), suggests a bucket with the reason, and saves your accepted choices to Airtable. It runs entirely in your browser.
 
 Funds without a ticker can still be split: add rows to Fund breakdown under a code (e.g. `AWARE-HG` for Aware Super High Growth) and set that code as the holding's Ticker. Tidy up does this automatically for Aware Super.
+
+## Trailing returns
+
+Each holding can show its **12-month** and **5-year (per year)** total return, measured to the last month-end with dividends reinvested, like a fund factsheet. The daily sync calculates them once a month from Alpha Vantage's monthly prices for any holding with a ticker, and for bitcoin. For holdings without a ticker (a super fund, a savings account), type the published figures into the holding's edit form.
+
+The asset list shows each holding's returns, a value-weighted 12-month return for each bucket, and one for everything. These describe the funds' past performance, not your own money-weighted return, and the projection doesn't use them. The edit form has a **Use the 5-year average** link if you want to copy that figure into the holding's Expected return.
 
 ## Projection
 

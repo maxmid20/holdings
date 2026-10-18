@@ -6,8 +6,8 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://api.airtable.com; form-action 'none'; base-uri 'none'; object-src 'none'">
 <meta name="referrer" content="no-referrer">
 <title>Holdings</title>
-<link rel="stylesheet" href="styles.css?v=2026-10-18c">
-<script src="app.js?v=2026-10-18c" defer></script>
+<link rel="stylesheet" href="styles.css?v=2026-10-18d">
+<script src="app.js?v=2026-10-18d" defer></script>
 </head>
 <body>
 <div class="wrap">
@@ -100,6 +100,14 @@
     <div class="field-row">
       <div class="field"><label for="fRate" id="fRateLabel">Expected return % / yr</label><input id="fRate" type="number" step="0.1" min="-50" max="50" inputmode="decimal" placeholder="Uses default"></div>
       <div class="field"><label for="fMonthly" id="fMonthlyLabel">Monthly contribution</label><input id="fMonthly" type="number" step="any" min="0" inputmode="decimal" placeholder="0"></div>
+    </div>
+    <button type="button" class="link-btn use5" id="fUse5" hidden>Use the 5-year average</button>
+    <div id="fRetWrap">
+      <div class="field-row">
+        <div class="field"><label for="fRet12">12-month return %</label><input id="fRet12" type="number" step="any" min="-100" inputmode="decimal" placeholder="—"></div>
+        <div class="field"><label for="fRet5">5-year return % / yr</label><input id="fRet5" type="number" step="any" min="-100" inputmode="decimal" placeholder="—"></div>
+      </div>
+      <p class="hint ret-hint" id="fRetHint"></p>
     </div>
     <div class="field"><label for="fFund">Fund / holding</label><input id="fFund" maxlength="120" list="fundList" placeholder="e.g. Vanguard Target Retirement 2060" autocomplete="off"></div>
     <div class="field"><label for="fNote">Note (optional)</label><input id="fNote" maxlength="300" placeholder="Institution, address…" autocomplete="off"></div>

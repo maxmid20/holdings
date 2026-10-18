@@ -151,3 +151,11 @@ dialog.wide{width:min(760px,calc(100vw - 32px))}
 .fx-row input{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:6px 8px;width:100%;min-width:0;font-variant-numeric:tabular-nums}
 .fx-row .fx-meta{grid-column:1 / -1;font-size:12px;color:var(--muted)}
 .fx-row .fx-meta.warn{color:var(--warn-ink)}
+/* Trailing returns */
+.group-head{gap:10px}
+.group-head .grp-ret{margin-left:auto;color:var(--muted);font-size:12px;font-weight:500;font-variant-numeric:tabular-nums}
+.group-head .grp-ret + .amt{margin-left:0}
+.ret-summary{margin:0 0 10px;font-size:13px;color:var(--muted)}
+.ret-summary strong{color:var(--text);font-variant-numeric:tabular-nums}
+.use5{display:block;margin:-6px 0 12px;font-size:13px}
+.ret-hint{margin:-6px 0 12px}

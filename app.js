@@ -70,11 +70,18 @@
       rate: rateOrNull(raw && raw.rate),
       monthly: posOrNull(raw && raw.monthly),
       assetClass: normClass(String((raw && raw.assetClass) || '').trim()),
-      currency: curOf(raw && raw.currency)
+      // Your own label in Airtable's Asset class (e.g. "Superannuation") isn't a bucket, but is kept as written.
+      assetClassNote: normClass(String((raw && raw.assetClass) || '').trim()) ? '' : String((raw && (raw.assetClassNote || raw.assetClass)) || '').trim().slice(0, 60),
+      currency: curOf(raw && raw.currency),
+      ret12: pctOrNull(raw && raw.ret12),
+      ret5: pctOrNull(raw && raw.ret5),
+      retAsOf: /^\d{4}-\d{2}/.test(String((raw && raw.retAsOf) || '')) ? String(raw.retAsOf).slice(0, 10) : '',
+      retSource: String((raw && raw.retSource) || '').trim().slice(0, 60)
     };
   }
   const TICKER_RE = /^[A-Z0-9][A-Z0-9.\-]{0,11}$/;
   function rateOrNull(v) { if (v === '' || v === null || v === undefined) return null; const n = Number(v); return Number.isFinite(n) && n >= -50 && n <= 50 ? n : null; }
+  function pctOrNull(v) { if (v === '' || v === null || v === undefined) return null; const n = Number(v); return Number.isFinite(n) && n >= -100 && n <= 10000 ? n : null; }
   function posOrNull(v) { if (v === '' || v === null || v === undefined) return null; const n = Number(v); return Number.isFinite(n) && n >= 0 ? n : null; }
 
   // Suggestions offered in the Account type / Owner inputs (you can still type anything).
@@ -171,14 +178,17 @@
       accountType: r.fields['Account type'], fund: r.fields.Fund, owner: r.fields.Owner,
       ticker: r.fields.Ticker, shares: r.fields.Shares, price: r.fields.Price, pricedOn: r.fields['Priced on'],
       rate: r.fields['Expected return %'], monthly: r.fields['Monthly contribution'], assetClass: r.fields['Asset class'],
-      currency: r.fields.Currency
+      currency: r.fields.Currency,
+      ret12: r.fields['12-month return %'], ret5: r.fields['5-year return %'],
+      retAsOf: r.fields['Return as of'], retSource: r.fields['Return source']
     })
   });
   const toFields = d => ({
     Name: d.name, Kind: d.kind === 'debt' ? 'Debt' : 'Asset', Category: d.category, Value: d.value, Note: d.note,
     'Account type': d.accountType, Fund: d.fund, Owner: d.owner, Ticker: d.ticker, Shares: d.shares,
-    'Expected return %': d.rate, 'Monthly contribution': d.monthly, 'Asset class': d.assetClass || null,
-    Currency: d.currency && d.currency !== BASE_CUR ? d.currency : null
+    'Expected return %': d.rate, 'Monthly contribution': d.monthly, 'Asset class': d.assetClass || d.assetClassNote || null,
+    Currency: d.currency && d.currency !== BASE_CUR ? d.currency : null,
+    '12-month return %': d.ret12, '5-year return %': d.ret5, 'Return as of': d.retAsOf || null, 'Return source': d.retSource || null
   });
 
   async function atLoadAll() {
@@ -386,11 +396,20 @@
     for (const v of [...new Set([...used, ...base])]) { const o = document.createElement('option'); o.value = v; dl.append(o); }
   }
 
+  const fmtPct = n => (n > 0 ? '+' : n < 0 ? '−' : '') + Math.abs(n).toFixed(1) + '%';
+  // Value-weighted 12-month return over the holdings that have one: { r, n, of }.
+  function wRet(list) {
+    const has = list.filter(i => i.ret12 !== null && i.ret12 !== undefined && i.value > 0);
+    const w = has.reduce((a, i) => a + i.value, 0);
+    return { r: w ? has.reduce((a, i) => a + i.value * i.ret12, 0) / w : null, n: has.length, of: list.length };
+  }
+
   function metaLine(i) {
     const sh = i.ticker && i.shares ? `${i.ticker} · ${new Intl.NumberFormat(undefined, { maximumFractionDigits: 4 }).format(i.shares)} sh` : i.ticker;
     const priced = i.pricedOn ? `priced ${i.pricedOn}` : '';
     const cat = i.kind === 'asset' ? i.category : '';
-    const bits = [cat, i.accountType, i.fund !== i.name ? i.fund : '', sh, i.owner, priced].filter(Boolean);
+    const ret = [i.ret12 !== null && i.ret12 !== undefined ? `12-mo ${fmtPct(i.ret12)}` : '', i.ret5 !== null && i.ret5 !== undefined ? `5-yr ${fmtPct(i.ret5)}/yr` : ''].filter(Boolean).join(', ');
+    const bits = [cat, i.accountType, i.fund !== i.name ? i.fund : '', sh, i.owner, priced, ret].filter(Boolean);
     return bits.length ? `<div class="meta">${bits.map(b => `<span>${esc(b)}</span>`).join('')}</div>` : '';
   }
 
@@ -404,7 +423,9 @@
       const g = list.filter(i => groupOf(i) === cat);
       if (!g.length) return '';
       const label = cat === 'Multi-asset' ? 'Multi-asset funds' : cat;
-      return `<div class="group"><div class="group-head"><span>${esc(label)}</span><span class="amt">${esc(fmt(sum(g)))}</span></div>` +
+      const gr = kind === 'asset' ? wRet(g) : { r: null };
+      const grTxt = gr.r === null ? '' : `<span class="grp-ret" title="12-month return, weighted by value, across ${gr.n} of ${gr.of} holding${gr.of === 1 ? '' : 's'}">12-mo ${esc(fmtPct(gr.r))}</span>`;
+      return `<div class="group"><div class="group-head"><span>${esc(label)}</span>${grTxt}<span class="amt">${esc(fmt(sum(g)))}</span></div>` +
         g.map(i => `<div class="row"><div><div class="name">${esc(i.name)}</div>${metaLine(i)}${i.note ? `<div class="note">${esc(i.note)}</div>` : ''}</div>` +
           `<div><div class="amt">${i.noFx ? '—' : esc(fmt(i.value))}</div>${i.currency !== dispCur() ? `<div class="native${i.noFx ? ' warn' : ''}">${esc(fmtIn(i.native, i.currency))}${i.noFx ? ' · no rate' : ''}</div>` : ''}</div><button class="icon-btn" type="button" data-edit="${esc(i.id)}" aria-label="Edit ${esc(i.name)}">✎</button></div>`).join('') +
         `</div>`;
@@ -412,22 +433,14 @@
   }
 
   function renderMix() {
-    const el = $('assetMix'); el.textContent = ''; return;  // replaced by the bucket panel
-    const assets = visible().filter(i => i.kind === 'asset'), total = sum(assets);
-    if (!total) return;
-    const parts = catsFor('asset', assets).map((c, ix) => ({ c, v: sum(assets.filter(a => a.category === c)), col: COLORS[ix % COLORS.length] })).filter(p => p.v > 0);
-    const bar = document.createElement('div'); bar.className = 'bar';
-    const legend = document.createElement('div'); legend.className = 'legend';
-    for (const p of parts) {
-      const seg = document.createElement('div');
-      seg.style.width = (p.v / total * 100) + '%'; seg.style.background = p.col; seg.title = p.c;
-      bar.append(seg);
-      const span = document.createElement('span'), dot = document.createElement('i');
-      dot.style.background = p.col;
-      span.append(dot, `${p.c} ${Math.round(p.v / total * 100)}%`);
-      legend.append(span);
-    }
-    el.append(bar, legend);
+    const el = $('assetMix'); el.textContent = '';   // now a one-line summary of trailing returns
+    const assets = visible().filter(i => i.kind === 'asset'), w = wRet(assets);
+    if (w.r === null) return;
+    const dates = assets.map(i => i.retAsOf).filter(Boolean).sort();
+    const p = document.createElement('p'); p.className = 'ret-summary';
+    const b = document.createElement('strong'); b.textContent = fmtPct(w.r);
+    p.append('12-month return, weighted by value: ', b, ` across ${w.n} of ${w.of} holdings` + (dates.length ? ` (to ${dates[dates.length - 1]})` : '') + '. Past returns, not a forecast.');
+    el.append(p);
   }
 
   function renderLookThrough() {
@@ -604,7 +617,7 @@
       ['totAssets', 'totDebts', 'totNet'].forEach(id => { $(id).textContent = '—'; });
       $('mixSection').hidden = true; $('projSection').hidden = true; $('projTip').hidden = true; $('fxNote').hidden = true;
       [...$('projChart').querySelectorAll('svg')].forEach(n => n.remove()); $('projTable').textContent = ''; $('projHeadline').textContent = '';
-      ['assets', 'debts', 'assetMix', 'lookBar', 'lookTable', 'mixHint', 'fName', 'fNote', 'fVal', 'fAcct', 'fFund', 'fOwner', 'fTicker', 'fShares', 'fRate', 'fMonthly', 'tidyList', 'fxList', 'fxText', 'acctList', 'ownerList', 'fundList']
+      ['assets', 'debts', 'assetMix', 'lookBar', 'lookTable', 'mixHint', 'fName', 'fNote', 'fVal', 'fAcct', 'fFund', 'fOwner', 'fTicker', 'fShares', 'fRate', 'fMonthly', 'fRet12', 'fRet5', 'fRetHint', 'tidyList', 'fxList', 'fxText', 'acctList', 'ownerList', 'fundList']
         .forEach(id => { const el = $(id); if (el.tagName === 'INPUT') el.value = ''; else el.textContent = ''; });
       return;
     }
@@ -748,7 +761,8 @@
   };
 
   // ---------- Item dialog ----------
-  let editingId = null, editKind = 'asset';
+  let editingId = null, editKind = 'asset', retStart = '';
+  $('fUse5').onclick = () => { const it = items.find(i => i.id === editingId); if (it && it.ret5 !== null) $('fRate').value = String(Math.round(it.ret5 * 10) / 10); };
   function openItem(kind, item) {
     editKind = kind; editingId = item ? item.id : null;
     $('itemTitle').textContent = (item ? 'Edit ' : 'Add ') + kind;
@@ -768,6 +782,19 @@
     $('fShares').value = item && item.shares !== null ? item.shares : '';
     $('fRate').value = item && item.rate !== null ? item.rate : '';
     $('fMonthly').value = item && item.monthly !== null ? item.monthly : '';
+    $('fRet12').value = item && item.ret12 !== null ? item.ret12 : '';
+    $('fRet5').value = item && item.ret5 !== null ? item.ret5 : '';
+    $('fRetWrap').hidden = kind === 'debt';
+    retStart = [$('fRet12').value, $('fRet5').value].join('|');
+    const auto = item && item.retSource && !/^manual/i.test(item.retSource);
+    $('fRetHint').textContent = !item ? 'Holdings with a ticker (or in bitcoin) get these from the daily sync each month. Otherwise, enter them yourself.'
+      : /^manual/i.test(item.retSource) ? `Entered by you${item.retAsOf ? ' on ' + item.retAsOf : ''}. The sync leaves these alone.`
+        : auto && item.ret12 !== null ? `From ${item.ticker || 'bitcoin'}'s price history, to ${item.retAsOf || 'last month-end'} (total return, dividends reinvested). Typing a value keeps yours instead.`
+          : auto ? `No price history found for ${item.ticker || 'this holding'}; enter the returns yourself if you know them.`
+            : item.ticker || item.currency === 'BTC' ? 'The daily sync fills these in monthly. You can also enter them yourself.' : 'Enter the published returns if you know them, e.g. from the fund’s website.';
+    const r5 = item && item.ret5 !== null ? item.ret5 : null;
+    $('fUse5').hidden = kind === 'debt' || r5 === null || r5 < -50 || r5 > 50;
+    if (r5 !== null) $('fUse5').textContent = `Use the 5-year average (${fmtPct(r5)})`;
     $('fRateLabel').textContent = kind === 'debt' ? 'Interest rate % / yr' : 'Expected return % / yr';
     $('fMonthlyLabel').textContent = kind === 'debt' ? 'Monthly payment' : 'Monthly contribution';
     $('fRate').placeholder = kind === 'debt' ? '0' : 'Uses default';
@@ -778,6 +805,16 @@
     $('itemErr').textContent = '';
     $('itemDlg').showModal();
   }
+  // Keep the sync's returns unless you change them; a changed value becomes yours (Manual) and the sync leaves it.
+  function retFields() {
+    const it = editingId ? items.find(i => i.id === editingId) : null;
+    const keep = it ? { ret12: it.ret12, ret5: it.ret5, retAsOf: it.retAsOf, retSource: it.retSource } : { ret12: null, ret5: null, retAsOf: '', retSource: '' };
+    if (editKind === 'debt' || [$('fRet12').value, $('fRet5').value].join('|') === retStart) return keep;
+    const r12 = $('fRet12').value, r5 = $('fRet5').value;
+    if (r12 === '' && r5 === '') return { ret12: null, ret5: null, retAsOf: '', retSource: '' };   // cleared: the sync may fill it again
+    return { ret12: r12, ret5: r5, retAsOf: new Date().toISOString().slice(0, 10), retSource: 'Manual' };
+  }
+
   $('itemForm').addEventListener('submit', async e => {
     e.preventDefault();
     if (!$('fName').value.trim()) { $('itemErr').textContent = 'Please enter a name.'; return; }
@@ -789,8 +826,11 @@
       ticker: $('fTicker').value, shares: $('fShares').value,
       rate: $('fRate').value, monthly: $('fMonthly').value,
       assetClass: editKind === 'asset' ? $('fClass').value : '',
-      currency: $('fCur').value
+      currency: $('fCur').value,
+      assetClassNote: editingId ? (items.find(i => i.id === editingId) || {}).assetClassNote : '',
+      ...retFields()
     });
+    if (editKind === 'asset' && (($('fRet12').value !== '' && d.ret12 === null) || ($('fRet5').value !== '' && d.ret5 === null))) { $('itemErr').textContent = 'Returns must be between -100% and 10000%.'; return; }
     if ($('fRate').value !== '' && d.rate === null) { $('itemErr').textContent = 'Enter a rate between -50% and 50%.'; return; }
     if ($('fTicker').value.trim() && !d.ticker) { $('itemErr').textContent = 'Tickers are letters/numbers only, e.g. VTTSX.'; return; }
     try {
