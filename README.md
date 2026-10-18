@@ -4,7 +4,7 @@ A simple, private net-worth tracker. Add your assets and debts, group them by ca
 
 - **Two storage modes:** browser-only (the default), or your own **Airtable** base, synced across your devices.
 - **Export / Import** a JSON backup at any time.
-- **Multi-currency display** (USD, EUR, GBP, CAD, AUD, JPY, CHF, INR).
+- **Multiple currencies:** each holding can be in its own currency (an Australian property in AUD, say), and everything is converted into the currency you choose to display.
 
 Live app: https://maxmid20.github.io/holdings/
 
@@ -29,7 +29,23 @@ Create a new base, for example "Holdings", with one table named **`Items`** and 
 | `Price`, `Priced on` | Number / text, written by the daily sync |
 | `Expected return %` | Number (2 dp, negatives allowed), optional. For a debt, this is its interest rate |
 | `Monthly contribution` | Number (2 dp), optional. For a debt, this is its monthly payment |
+| `Currency` | Single line text, optional. A currency code: USD, AUD, EUR, GBP, CAD, NZD, JPY, CHF, SGD, HKD or INR. Blank means USD. `Value` and `Monthly contribution` are in this currency |
 | `Asset class` | Single line text, optional. One of: US stocks, International stocks, Equities, US bonds, International bonds, Bonds, Cash, Property, Gold, Commodities, Bitcoin, Crypto, Other. Set by **Tidy up** or the Bucket picker |
+
+## Currencies
+
+Give a holding a **Currency** (in its edit form, or the `Currency` column in Airtable) and enter its value in that currency. The app converts every holding into the display currency (the picker at the top) for the totals, buckets, projection and contributions. Each converted row also shows its original amount, such as A$900,000.
+
+Rates live in a small **FX rates** table, one row per currency:
+
+| Field | Type |
+|---|---|
+| `Currency` | Single line text (primary field), e.g. `AUD` |
+| `Per USD` | Number (6 decimal places): how many of that currency 1 US dollar buys, e.g. 1.53 |
+| `As of` | Single line text, e.g. 2026-10-17 |
+| `Source` | Single line text: `Auto (ECB via Frankfurter)` from the daily sync, or `Manual` for a rate you typed |
+
+The daily sync refreshes the rates every weekday from the European Central Bank (through the free Frankfurter service). You can also set or override a rate under **Exchange rates** (below the totals). A manual rate is kept until you choose "Use the daily rate instead". Until a currency has a rate, its holdings are left out of the totals and the app says so. In browser-only mode, rates you type are kept in this browser.
 
 ## Buckets
 
@@ -59,7 +75,7 @@ Projection settings (years, default return, inflation) are saved only in your br
 Two more tables power the look-through ("Your real mix") panel:
 
 - **Fund breakdown**: one row per fund per asset class (`Key`, `Fund ticker`, `Asset class`, `Weight %`, `As of`, `Source`). Rows with a `Source` starting with "Manual" are yours and always win. The daily sync writes "Auto" rows.
-- **Exposure history**: one row per day, written by the daily sync, with dollars per asset class plus total assets, debts and net worth.
+- **Exposure history**: one row per day, written by the daily sync, with US dollars per bucket plus total assets, debts and net worth (other currencies are converted first).
 
 The daily sync runs as a scheduled GitHub Actions job in a separate **private** repository (`holdings-sync`), so its secrets and logs stay private. The app itself only ever reads these tables.
 

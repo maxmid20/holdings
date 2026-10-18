@@ -30,6 +30,7 @@
     <div class="card"><div class="label">Debts</div><div class="value" id="totDebts">—</div></div>
     <div class="card net"><div class="label">Net worth</div><div class="value" id="totNet">—</div></div>
   </div>
+  <p class="fx-note" id="fxNote" hidden><span id="fxText"></span> <button type="button" class="link-btn" id="fxBtn">Exchange rates</button></p>
 
   <div class="card lock-card" id="lockCard" hidden>
     <h2>🔒 Locked</h2>
@@ -84,7 +85,10 @@
       <div class="field"><label for="fCat">Category / account</label><select id="fCat"></select></div>
       <div class="field" id="fClassWrap"><label for="fClass">Bucket</label><select id="fClass"></select></div>
     </div>
-    <div class="field"><label for="fVal">Value</label><input id="fVal" type="number" step="0.01" min="0" max="1000000000000" required inputmode="decimal"></div>
+    <div class="field-row val-row">
+      <div class="field"><label for="fVal">Value</label><input id="fVal" type="number" step="0.01" min="0" max="1000000000000" required inputmode="decimal"></div>
+      <div class="field"><label for="fCur">Currency</label><select id="fCur"></select></div>
+    </div>
     <div class="field-row">
       <div class="field"><label for="fAcct">Account type</label><input id="fAcct" maxlength="80" list="acctList" placeholder="e.g. 401(k)" autocomplete="off"></div>
       <div class="field"><label for="fOwner">Owner</label><input id="fOwner" maxlength="80" list="ownerList" placeholder="e.g. Myself" autocomplete="off"></div>
@@ -162,6 +166,21 @@
     <button type="button" class="btn" data-close>Cancel</button>
     <button type="button" class="btn primary" id="tidySave">Save changes</button>
   </div>
+</dialog>
+
+<!-- Exchange rates -->
+<dialog id="fxDlg">
+  <form id="fxForm" novalidate>
+    <h3>Exchange rates</h3>
+    <p class="sub" id="fxSub">Holdings in other currencies are converted into your display currency with these rates. The daily sync refreshes them from the European Central Bank; a rate you type in yourself is kept until you reset it.</p>
+    <div class="fx-list" id="fxList"></div>
+    <p class="form-err" id="fxErr"></p>
+    <div class="actions">
+      <span class="spacer"></span>
+      <button type="button" class="btn" data-close>Cancel</button>
+      <button type="submit" class="btn primary" id="fxSave">Save rates</button>
+    </div>
+  </form>
 </dialog>
 
 <!-- Connection menu -->

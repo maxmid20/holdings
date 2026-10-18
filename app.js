@@ -17,7 +17,9 @@
     debt: ['Mortgage', 'Auto loan', 'Student loan', 'Credit card', 'Personal loan', 'Other']
   };
   const COLORS = ['#2f5d50', '#c8963e', '#5b7fa6', '#a65b7f', '#6e9c4f', '#8a6fbf', '#c46a4a', '#7a7a7a'];
-  const CURRENCIES = ['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY', 'CHF', 'INR'];
+  const CURRENCIES = ['USD', 'AUD', 'EUR', 'GBP', 'CAD', 'NZD', 'JPY', 'CHF', 'SGD', 'HKD', 'INR'];
+  const BASE_CUR = 'USD';                    // a holding with no Currency is in US dollars; rates are per 1 USD
+  const curOf = c => { const x = String(c || '').trim().toUpperCase(); return CURRENCIES.includes(x) ? x : BASE_CUR; };
 
   // Buckets are what you see; classes are the finer detail stored in Airtable (they roll up into buckets).
   const BUCKETS = ['Equities', 'Bonds', 'Cash', 'Gold', 'Property', 'Commodities', 'Bitcoin', 'Other'];
@@ -65,7 +67,8 @@
       pricedOn: /^\d{4}-\d{2}-\d{2}/.test(String((raw && raw.pricedOn) || '')) ? String(raw.pricedOn).slice(0, 10) : '',
       rate: rateOrNull(raw && raw.rate),
       monthly: posOrNull(raw && raw.monthly),
-      assetClass: normClass(String((raw && raw.assetClass) || '').trim())
+      assetClass: normClass(String((raw && raw.assetClass) || '').trim()),
+      currency: curOf(raw && raw.currency)
     };
   }
   const TICKER_RE = /^[A-Z0-9][A-Z0-9.\-]{0,11}$/;
@@ -165,13 +168,15 @@
       category: r.fields.Category, value: r.fields.Value, note: r.fields.Note,
       accountType: r.fields['Account type'], fund: r.fields.Fund, owner: r.fields.Owner,
       ticker: r.fields.Ticker, shares: r.fields.Shares, price: r.fields.Price, pricedOn: r.fields['Priced on'],
-      rate: r.fields['Expected return %'], monthly: r.fields['Monthly contribution'], assetClass: r.fields['Asset class']
+      rate: r.fields['Expected return %'], monthly: r.fields['Monthly contribution'], assetClass: r.fields['Asset class'],
+      currency: r.fields.Currency
     })
   });
   const toFields = d => ({
     Name: d.name, Kind: d.kind === 'debt' ? 'Debt' : 'Asset', Category: d.category, Value: d.value, Note: d.note,
     'Account type': d.accountType, Fund: d.fund, Owner: d.owner, Ticker: d.ticker, Shares: d.shares,
-    'Expected return %': d.rate, 'Monthly contribution': d.monthly, 'Asset class': d.assetClass || null
+    'Expected return %': d.rate, 'Monthly contribution': d.monthly, 'Asset class': d.assetClass || null,
+    Currency: d.currency && d.currency !== BASE_CUR ? d.currency : null
   });
 
   async function atLoadAll() {
@@ -232,10 +237,53 @@
     }
     return out;
   }
+  // ---------- Exchange rates ----------
+  // fx[code] = { rate: units per 1 USD, source: 'Auto…' | 'Manual', asOf, id? }. Airtable mode reads the
+  // "FX rates" table (the daily sync keeps Auto rows fresh); browser-only mode keeps rates in preferences.
+  const FX_TABLE = 'FX rates';
+  let fx = {}, fxTableOk = false;
+  const fxOk = r => Number.isFinite(r) && r > 0 && r < 1e7;
+  const rateOf = c => { c = curOf(c); return c === BASE_CUR ? 1 : (fx[c] && fxOk(fx[c].rate) ? fx[c].rate : null); };
+  const dispCur = () => rateOf(prefs.currency) ? prefs.currency : BASE_CUR;
+  const conv = (v, c) => { const from = rateOf(c), to = rateOf(dispCur()); return from && to && v !== null && v !== undefined ? Number(v) / from * to : null; };
+  function localFx() {
+    const out = {};
+    for (const [c, e] of Object.entries((prefs.fx && typeof prefs.fx === 'object') ? prefs.fx : {}))
+      if (CURRENCIES.includes(c) && c !== BASE_CUR && e && fxOk(Number(e.rate))) out[c] = { rate: Number(e.rate), source: 'Manual', asOf: String(e.asOf || '').slice(0, 10) };
+    return out;
+  }
+  async function atLoadFx() {
+    const out = {};
+    const j = await at(`${session.baseId}/${encodeURIComponent(FX_TABLE)}?pageSize=100`);
+    for (const r of j.records || []) {
+      const f = r.fields || {}, c = String(f.Currency || '').trim().toUpperCase(), rate = Number(f['Per USD']);
+      if (!CURRENCIES.includes(c) || c === BASE_CUR || !fxOk(rate) || !REC_RE.test(r.id)) continue;
+      const src = String(f.Source || '').slice(0, 60), isManual = /^manual/i.test(src);
+      if (out[c] && out[c].source === 'Manual' && !isManual) continue;   // a manual row beats an automatic one
+      out[c] = { rate, source: isManual ? 'Manual' : (src || 'Auto'), asOf: String(f['As of'] || '').slice(0, 10), id: r.id };
+    }
+    return out;
+  }
+  async function saveFx(changes) {            // [{ code, rate, source }]
+    const today = new Date().toISOString().slice(0, 10);
+    if (mode !== 'airtable') {
+      prefs.fx = prefs.fx && typeof prefs.fx === 'object' ? prefs.fx : {};
+      for (const ch of changes) { prefs.fx[ch.code] = { rate: ch.rate, asOf: today }; }
+      savePrefs(); fx = localFx(); return;
+    }
+    for (let k = 0; k < changes.length; k += 10) {
+      const records = changes.slice(k, k + 10).map(ch => ({ fields: { Currency: ch.code, 'Per USD': ch.rate, 'As of': today, Source: ch.source } }));
+      await at(`${session.baseId}/${encodeURIComponent(FX_TABLE)}`, { method: 'PATCH', body: { performUpsert: { fieldsToMergeOn: ['Currency'] }, records, typecast: true } });
+    }
+    fx = await atLoadFx(); fxTableOk = true;
+  }
+
   async function loadAirtable() {
     items = await atLoadAll();
     try { breakdown = await atLoadBreakdown(); }
     catch (x) { breakdown = {}; }                        // the table is optional; the app works without it
+    try { fx = await atLoadFx(); fxTableOk = true; }
+    catch (x) { fx = {}; fxTableOk = false; }
   }
 
   async function atCreateMany(list) {
@@ -274,7 +322,7 @@
   // ---------- Lock / unlock ----------
   function lock(reason) {
     if (mode !== 'airtable') return;
-    session = null; items = []; breakdown = {}; mode = 'locked';
+    session = null; items = []; breakdown = {}; fx = {}; mode = 'locked';
     document.querySelectorAll('dialog[open]').forEach(d => d.close());
     clearSecrets();
     render();
@@ -289,7 +337,8 @@
   });
 
   // ---------- Rendering ----------
-  const fmt = n => new Intl.NumberFormat(undefined, { style: 'currency', currency: prefs.currency, maximumFractionDigits: 0 }).format(n);
+  const fmtIn = (n, c) => new Intl.NumberFormat(undefined, { style: 'currency', currency: c, maximumFractionDigits: 0 }).format(n);
+  const fmt = n => fmtIn(n, dispCur());
 
   function showBanner(text, kind = 'err') {
     $('bannerText').textContent = text;
@@ -306,7 +355,12 @@
   // Owner filter (kept in memory only, so no names are written to this device)
   let ownerView = '';
   const ownersInUse = () => [...new Set(items.map(i => i.owner).filter(Boolean))].sort((a, b) => a.localeCompare(b));
-  const visible = () => ownerView ? items.filter(i => i.owner === ownerView) : items;
+  // Everything below works in the display currency: each holding is converted once here. A holding whose
+  // currency has no rate yet counts as 0 and is flagged (noFx) so the page can say so.
+  const visible = () => (ownerView ? items.filter(i => i.owner === ownerView) : items).map(i => {
+    const v = conv(i.value, i.currency), m = i.monthly === null ? null : conv(i.monthly, i.currency);
+    return { ...i, native: i.value, value: v === null ? 0 : v, monthly: v === null ? null : m, noFx: v === null };
+  });
   function renderOwnerFilter() {
     const sel = $('ownerFilter'), owners = ownersInUse();
     if (!owners.includes(ownerView)) ownerView = '';
@@ -344,7 +398,7 @@
       const label = cat === 'Multi-asset' ? 'Multi-asset funds' : cat;
       return `<div class="group"><div class="group-head"><span>${esc(label)}</span><span class="amt">${esc(fmt(sum(g)))}</span></div>` +
         g.map(i => `<div class="row"><div><div class="name">${esc(i.name)}</div>${metaLine(i)}${i.note ? `<div class="note">${esc(i.note)}</div>` : ''}</div>` +
-          `<div class="amt">${esc(fmt(i.value))}</div><button class="icon-btn" type="button" data-edit="${esc(i.id)}" aria-label="Edit ${esc(i.name)}">✎</button></div>`).join('') +
+          `<div><div class="amt">${i.noFx ? '—' : esc(fmt(i.value))}</div>${i.currency !== dispCur() ? `<div class="native${i.noFx ? ' warn' : ''}">${esc(fmtIn(i.native, i.currency))}${i.noFx ? ' · no rate' : ''}</div>` : ''}</div><button class="icon-btn" type="button" data-edit="${esc(i.id)}" aria-label="Edit ${esc(i.name)}">✎</button></div>`).join('') +
         `</div>`;
     }).join('');
   }
@@ -540,9 +594,9 @@
     if (locked) {
       ownerView = '';
       ['totAssets', 'totDebts', 'totNet'].forEach(id => { $(id).textContent = '—'; });
-      $('mixSection').hidden = true; $('projSection').hidden = true; $('projTip').hidden = true;
+      $('mixSection').hidden = true; $('projSection').hidden = true; $('projTip').hidden = true; $('fxNote').hidden = true;
       [...$('projChart').querySelectorAll('svg')].forEach(n => n.remove()); $('projTable').textContent = ''; $('projHeadline').textContent = '';
-      ['assets', 'debts', 'assetMix', 'lookBar', 'lookTable', 'mixHint', 'fName', 'fNote', 'fVal', 'fAcct', 'fFund', 'fOwner', 'fTicker', 'fShares', 'fRate', 'fMonthly', 'tidyList', 'acctList', 'ownerList', 'fundList']
+      ['assets', 'debts', 'assetMix', 'lookBar', 'lookTable', 'mixHint', 'fName', 'fNote', 'fVal', 'fAcct', 'fFund', 'fOwner', 'fTicker', 'fShares', 'fRate', 'fMonthly', 'tidyList', 'fxList', 'fxText', 'acctList', 'ownerList', 'fundList']
         .forEach(id => { const el = $(id); if (el.tagName === 'INPUT') el.value = ''; else el.textContent = ''; });
       return;
     }
@@ -552,6 +606,7 @@
     $('totDebts').textContent = fmt(d);
     $('totNet').textContent = fmt(a - d);
     $('tidyBtn').hidden = !items.some(i => i.kind === 'asset');
+    renderFxNote(vis);
     renderMix(); renderLookThrough(); renderProjection(); renderList('asset'); renderList('debt');
   }
 
@@ -694,6 +749,7 @@
     $('fName').value = item ? item.name : '';
     sel.value = item ? item.category : CATS[kind][0];
     $('fVal').value = item ? item.value : '';
+    $('fCur').value = item ? item.currency : BASE_CUR;
     $('fNote').value = item ? item.note : '';
     $('fAcct').value = item ? item.accountType : '';
     $('fFund').value = item ? item.fund : '';
@@ -724,7 +780,8 @@
       accountType: $('fAcct').value, fund: $('fFund').value, owner: $('fOwner').value,
       ticker: $('fTicker').value, shares: $('fShares').value,
       rate: $('fRate').value, monthly: $('fMonthly').value,
-      assetClass: editKind === 'asset' ? $('fClass').value : ''
+      assetClass: editKind === 'asset' ? $('fClass').value : '',
+      currency: $('fCur').value
     });
     if ($('fRate').value !== '' && d.rate === null) { $('itemErr').textContent = 'Enter a rate between -50% and 50%.'; return; }
     if ($('fTicker').value.trim() && !d.ticker) { $('itemErr').textContent = 'Tickers are letters/numbers only, e.g. VTTSX.'; return; }
@@ -813,7 +870,7 @@
 
   function disconnect() {
     if (!confirm('Disconnect Airtable on this device? Your data stays in Airtable, and the encrypted token is erased from this browser. You can reconnect anytime with a token.')) return;
-    store.del(VAULT_KEY); session = null; breakdown = {}; mode = 'local'; items = loadLocalItems();
+    store.del(VAULT_KEY); session = null; breakdown = {}; mode = 'local'; items = loadLocalItems(); fx = localFx();
     document.querySelectorAll('dialog[open]').forEach(d => d.close()); clearSecrets(); render();
     showBanner('Disconnected. For extra safety, you can also revoke the token at airtable.com/create/tokens.', 'info');
   }
@@ -823,9 +880,77 @@
 
   // ---------- Currency ----------
   const cur = $('currency');
-  for (const c of CURRENCIES) { const o = document.createElement('option'); o.textContent = c; cur.append(o); }
+  for (const c of CURRENCIES) { const o = document.createElement('option'); o.textContent = c; cur.append(o); $('fCur').append(o.cloneNode(true)); }
   cur.value = prefs.currency;
   cur.onchange = () => { if (CURRENCIES.includes(cur.value)) { prefs.currency = cur.value; savePrefs(); render(); } };
+
+  // Currencies that need a rate: those your holdings use, plus the display currency.
+  const fxNeeded = () => [...new Set([...items.map(i => i.currency), prefs.currency])].filter(c => c !== BASE_CUR).sort((a, b) => CURRENCIES.indexOf(a) - CURRENCIES.indexOf(b));
+  const fmtRate = r => new Intl.NumberFormat(undefined, { maximumSignificantDigits: 5 }).format(r);
+  const srcLabel = e => !e ? 'Not set yet' : e.source === 'Manual' ? `Set by you${e.asOf ? ' on ' + e.asOf : ''}` : `Daily rate${/ecb/i.test(e.source) ? ' (ECB)' : ''}${e.asOf ? ' · ' + e.asOf : ''}`;
+  function renderFxNote(vis) {
+    const note = $('fxNote'), need = fxNeeded();
+    if (!need.length) { note.hidden = true; return; }
+    const missing = need.filter(c => !rateOf(c)), left = vis.filter(i => i.noFx).length;
+    note.classList.toggle('warn', missing.length > 0);
+    if (missing.length) {
+      const bits = [`No ${missing.join(', ')} exchange rate yet`];
+      if (left) bits.push(`${left} holding${left === 1 ? '' : 's'} left out of the totals`);
+      if (!rateOf(prefs.currency)) bits.push(`showing ${BASE_CUR} instead of ${prefs.currency}`);
+      $('fxText').textContent = bits.join(': ') + '.';
+    } else {
+      const pairs = need.map(c => `1 ${BASE_CUR} = ${fmtRate(rateOf(c))} ${c}`).join(' · ');
+      const dates = need.map(c => fx[c] && fx[c].asOf).filter(Boolean).sort();
+      $('fxText').textContent = `Converted to ${dispCur()} at ${pairs}${dates.length ? ` (as of ${dates[0]})` : ''}.`;
+    }
+    note.hidden = false;
+  }
+
+  let fxRows = [];
+  function openFx() {
+    const list = $('fxList'); list.textContent = ''; $('fxErr').textContent = '';
+    fxRows = fxNeeded().map(code => {
+      const e = fx[code];
+      const row = document.createElement('div'); row.className = 'fx-row';
+      const lab = document.createElement('label'); lab.htmlFor = 'fx-' + code; lab.textContent = `1 ${BASE_CUR} =`;
+      const inp = document.createElement('input'); inp.id = 'fx-' + code; inp.type = 'number'; inp.step = 'any'; inp.min = '0'; inp.inputMode = 'decimal';
+      inp.value = e ? String(e.rate) : ''; inp.placeholder = 'e.g. ' + ({ AUD: '1.55', EUR: '0.92', GBP: '0.78', CAD: '1.38', NZD: '1.70', JPY: '150' }[code] || '1.00');
+      const unit = document.createElement('span'); unit.textContent = code;
+      const meta = document.createElement('div'); meta.className = 'fx-meta' + (e ? '' : ' warn'); meta.textContent = srcLabel(e);
+      const r = { code, inp, start: inp.value, reset: false };
+      if (e && e.source === 'Manual' && mode === 'airtable') {
+        const b = document.createElement('button'); b.type = 'button'; b.className = 'link-btn'; b.textContent = 'Use the daily rate instead';
+        b.onclick = () => { r.reset = true; meta.textContent = 'Will switch back to the daily rate at the next sync'; b.remove(); };
+        meta.append(' · ', b);
+      }
+      row.append(lab, inp, unit, meta); list.append(row);
+      return r;
+    });
+    if (!fxRows.length) { const p = document.createElement('p'); p.className = 'hint'; p.textContent = `All your holdings are in ${BASE_CUR}. Set a holding's currency in its edit form.`; list.append(p); }
+    $('fxSub').hidden = !fxRows.length;
+    $('fxSave').hidden = !fxRows.length;
+    $('fxDlg').showModal();
+  }
+  $('fxBtn').onclick = openFx;
+  $('fxForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    const changes = [];
+    for (const r of fxRows) {
+      const t = r.inp.value.trim();
+      if (r.reset && t === r.start) { changes.push({ code: r.code, rate: Number(t), source: 'Auto' }); continue; }
+      if (t === r.start) continue;
+      const n = Number(t);
+      if (!fxOk(n)) { $('fxErr').textContent = `Enter how many ${r.code} one ${BASE_CUR} buys, e.g. 1.55.`; r.inp.focus(); return; }
+      changes.push({ code: r.code, rate: n, source: 'Manual' });
+    }
+    if (!changes.length) { $('fxDlg').close(); return; }
+    try {
+      await busy($('fxSave'), () => saveFx(changes));
+      $('fxDlg').close(); render(); showBanner('Exchange rates saved.', 'info');
+    } catch (x) {
+      $('fxErr').textContent = /404|not found/i.test(x.message) ? `Your base has no "${FX_TABLE}" table yet (see the README).` : x.message;
+    }
+  });
 
   // ---------- Export / import ----------
   $('exportBtn').onclick = () => {
@@ -860,6 +985,7 @@
   };
 
   // ---------- Start ----------
+  if (mode === 'local') fx = localFx();
   if (!window.crypto || !crypto.subtle) showBanner('This browser lacks the secure encryption features Holdings needs for Airtable. Make sure you’re on the https:// address.');
   render();
   if (mode === 'locked') openUnlock();
