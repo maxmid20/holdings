@@ -6,8 +6,8 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://api.airtable.com; form-action 'none'; base-uri 'none'; object-src 'none'">
 <meta name="referrer" content="no-referrer">
 <title>Holdings</title>
-<link rel="stylesheet" href="styles.css?v=2026-10-18j">
-<script src="app.js?v=2026-10-18j" defer></script>
+<link rel="stylesheet" href="styles.css?v=2026-10-18k">
+<script src="app.js?v=2026-10-18k" defer></script>
 </head>
 <body>
 <div class="wrap">
@@ -125,6 +125,7 @@
     <div class="section">
       <div class="section-head"><h2>Debts</h2><button class="btn primary" type="button" data-add="debt">+ Add debt</button></div>
       <div id="debts"></div>
+      <p class="hint debt-plan" id="debtPlan"></p>
     </div>
   </div>
 
@@ -155,6 +156,13 @@
     <div class="field-row">
       <div class="field"><label for="fRate" id="fRateLabel">Expected return % / yr</label><input id="fRate" type="number" step="0.1" min="-50" max="50" inputmode="decimal" placeholder="Uses default"></div>
       <div class="field"><label for="fMonthly" id="fMonthlyLabel">Monthly contribution</label><input id="fMonthly" type="number" step="any" min="0" inputmode="decimal" placeholder="0"></div>
+    </div>
+    <div id="fDebtWrap" hidden>
+      <div class="field-row">
+        <div class="field"><label for="fYears">Years left (optional)</label><input id="fYears" type="number" step="any" min="0" max="100" inputmode="decimal" placeholder="e.g. 22"></div>
+        <div class="field"><label for="fWO">Written off (optional)</label><input id="fWO" maxlength="7" placeholder="e.g. 2039 or 2039-04" autocomplete="off"></div>
+      </div>
+      <p class="hint ret-hint">Leave the monthly payment blank to work it out from the years left. A write-off date forgives whatever’s left then, whatever you’ve paid.</p>
     </div>
     <button type="button" class="link-btn use5" id="fUse5" hidden>Use the 5-year average</button>
     <div id="fRetWrap">

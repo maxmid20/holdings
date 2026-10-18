@@ -30,6 +30,8 @@ Create a new base, for example "Holdings", with one table named **`Items`** and 
 | `Expected return %` | Number (2 dp, negatives allowed), optional. For a debt, this is its interest rate |
 | `Monthly contribution` | Number (2 dp), optional. For a debt, this is its monthly payment |
 | `Currency` | Single line text, optional. A currency code: USD, AUD, EUR, GBP, CAD, NZD, JPY, CHF, SGD, HKD, INR, BTC for bitcoin held directly (Value = the number of coins, e.g. 0.25), or XAU for physical gold (Value = troy ounces, e.g. 2.5). Blank means USD. `Value` and `Monthly contribution` are in this currency |
+| `Years left` | Number, optional (debts). Remaining term: if the debt has no monthly payment, the app works out the payment that clears it in this time |
+| `Written off` | Single line text, optional (debts). A date the remaining balance is forgiven regardless, as `2039` or `2039-04` (e.g. a UK student loan) |
 | `Institution` | Single line text, optional. Who holds the asset, e.g. Vanguard, Fidelity, Empower, Chase, NAB. Used by Counterparty risk; if blank, the app guesses from the name, account type, fund or note |
 | `12-month return %`, `5-year return %` | Number (2 dp, negatives allowed), optional. Trailing total returns; the 5-year figure is per year. Filled in monthly by the daily sync for holdings with a ticker or in BTC, or typed by you |
 | `Return as of`, `Return source` | Single line text, written with the returns (`Auto (…)` from the sync, `Manual` if you typed them; the sync never overwrites Manual) |
@@ -108,7 +110,7 @@ The **Emergency fund** section answers "how many months could I live on my emerg
 The **Projection** panel projects every holding forward, month by month:
 
 - **Assets** grow at their `Expected return %` (compounded monthly), plus their `Monthly contribution` at each month's end. Holdings without a return use the panel's **Default return %** if they're Investments, Retirement, Crypto, or Other, and 0% otherwise (cash, property, vehicles…).
-- **Debts** grow at their interest rate and shrink by their monthly payment until they're paid off.
+- **Debts** grow at their interest rate and shrink by their monthly payment until they're paid off. With no payment but **Years left**, the payment is the one that clears the debt in that time. A **Written off** date drops whatever is left to zero on that date. Each debt shows when it ends ("Paid off Oct 2048 at A$1,279/mo" or "Written off Jan 2039 · ~£55,158 forgiven"), and the Debts section says when you'll be debt-free.
 - **Today's dollars** divides future values by inflation, so you can see real purchasing power.
 - The chart compares projected net worth with **"without growth"** (today's balances plus everything you'll add). The gap between the two lines is investment growth.
 

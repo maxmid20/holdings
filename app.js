@@ -76,6 +76,9 @@
       assetClassNote: normClass(String((raw && raw.assetClass) || '').trim()) ? '' : String((raw && (raw.assetClassNote || raw.assetClass)) || '').trim().slice(0, 60),
       currency: curOf(raw && raw.currency),
       institution: String((raw && raw.institution) || '').trim().slice(0, 80),
+      // debts: remaining term (to work out a payment) and a date the balance is forgiven regardless (e.g. a student loan)
+      yearsLeft: (v => v !== null && v <= 100 ? v : null)(posOrNull(raw && raw.yearsLeft)),
+      writeOff: (m => m ? m[1] + (m[2] ? '-' + m[2].padStart(2, '0') : '') : '')(/^\s*(\d{4})(?:[-\/.](\d{1,2}))?/.exec(String((raw && raw.writeOff) || ''))),
       ret12: pctOrNull(raw && raw.ret12),
       ret5: pctOrNull(raw && raw.ret5),
       retAsOf: /^\d{4}-\d{2}/.test(String((raw && raw.retAsOf) || '')) ? String(raw.retAsOf).slice(0, 10) : '',
@@ -214,16 +217,22 @@
       accountType: r.fields['Account type'], fund: r.fields.Fund, owner: r.fields.Owner,
       ticker: r.fields.Ticker, shares: r.fields.Shares, price: r.fields.Price, pricedOn: r.fields['Priced on'],
       rate: r.fields['Expected return %'], monthly: r.fields['Monthly contribution'], assetClass: r.fields['Asset class'],
-      currency: r.fields.Currency, institution: r.fields.Institution,
+      currency: r.fields.Currency, institution: r.fields.Institution, yearsLeft: r.fields['Years left'], writeOff: r.fields['Written off'],
       ret12: r.fields['12-month return %'], ret5: r.fields['5-year return %'],
       retAsOf: r.fields['Return as of'], retSource: r.fields['Return source']
     })
   });
   // Optional columns your Items table may not have yet. If Airtable reports one as unknown, we stop sending it,
   // retry the save, and tell you which column to add (see itemsWrite).
-  const OPTIONAL_FIELDS = ['Institution'];
+  const OPTIONAL_FIELDS = ['Institution', 'Years left', 'Written off'];
   const missingFields = new Set();
-  const toFields = d => { const f = toFieldsAll(d); for (const k of missingFields) delete f[k]; if (!f.Institution) delete f.Institution; return f; };
+  const toFields = d => {
+    const f = toFieldsAll(d);
+    if (!f.Institution) delete f.Institution;
+    if (d.kind !== 'debt') { delete f['Years left']; delete f['Written off']; }
+    for (const k of missingFields) delete f[k];
+    return f;
+  };
   async function itemsWrite(fn) {
     try { return await fn(); }
     catch (x) {
@@ -240,6 +249,7 @@
     'Account type': d.accountType, Fund: d.fund, Owner: d.owner, Ticker: d.ticker, Shares: d.shares,
     'Expected return %': d.rate, 'Monthly contribution': d.monthly, 'Asset class': d.assetClass || d.assetClassNote || null,
     Currency: d.currency && d.currency !== BASE_CUR ? d.currency : null, Institution: d.institution || null,
+    'Years left': d.yearsLeft, 'Written off': d.writeOff || null,
     '12-month return %': d.ret12, '5-year return %': d.ret5, 'Return as of': d.retAsOf || null, 'Return source': d.retSource || null
   });
 
@@ -536,7 +546,7 @@
     const priced = i.pricedOn ? `priced ${i.pricedOn}` : '';
     const cat = i.kind === 'asset' ? i.category : '';
     const ret = [i.ret12 !== null && i.ret12 !== undefined ? `12-mo ${fmtPct(i.ret12)}` : '', i.ret5 !== null && i.ret5 !== undefined ? `5-yr ${fmtPct(i.ret5)}/yr` : ''].filter(Boolean).join(', ');
-    const bits = [cat, i.accountType, i.fund !== i.name ? i.fund : '', sh, i.owner, priced, ret].filter(Boolean);
+    const bits = [cat, i.accountType, i.fund !== i.name ? i.fund : '', sh, i.owner, priced, ret, planText(i)].filter(Boolean);
     return bits.length ? `<div class="meta">${bits.map(b => `<span>${esc(b)}</span>`).join('')}</div>` : '';
   }
 
@@ -557,6 +567,16 @@
           `<div><div class="amt">${i.noFx ? '—' : esc(fmt(i.value))}</div>${i.currency !== dispCur() ? `<div class="native${i.noFx ? ' warn' : ''}">${esc(fmtIn(i.native, i.currency))}${i.noFx ? ' · no rate' : ''}</div>` : ''}</div><button class="icon-btn" type="button" data-edit="${esc(i.id)}" aria-label="Edit ${esc(i.name)}">✎</button></div>`).join('') +
         `</div>`;
     }).join('');
+  }
+
+  function renderDebtPlan() {
+    const el = $('debtPlan'), debts = visible().filter(i => i.kind === 'debt' && i.value > 0);
+    if (!debts.length) { el.textContent = ''; return; }
+    const plans = debts.map(i => ({ i, p: debtPlan(i) }));
+    const stuck = plans.filter(x => x.p.end === null), last = Math.max(...plans.filter(x => x.p.end !== null).map(x => x.p.end), -1);
+    const forgiven = plans.filter(x => x.p.forgiven > 0.5).map(x => `${x.i.name} (~${fmtIn(x.p.forgiven, x.i.currency)})`);
+    el.textContent = (last >= 0 ? `Debt-free by ${monthLabel(last)}${stuck.length ? `, except ${stuck.map(x => x.i.name).join(', ')}` : ''}.` : 'Add payments, years left or a write-off date to see when your debts end.')
+      + (forgiven.length ? ` Written off along the way: ${forgiven.join(', ')}.` : '') + (stuck.length && last >= 0 ? ' Add a payment, years left or write-off date for the rest.' : '');
   }
 
   function renderMix() { $('assetMix').textContent = ''; }   // superseded by the Returns panel
@@ -705,6 +725,7 @@
   function institutionOf(i) {
     const direct = (mainBucket(i) === 'Property' && !i.ticker) || PRICED.includes(i.currency) || /^owned$/i.test(i.category || '');
     const byName = n => INST.find(x => x.re.test(n));
+    if (/^\s*(own|owned|self|myself|me|held directly|self[- ]?custody|home|cold wallet)\s*$/i.test(i.institution || '')) return { name: 'Held directly', kind: 'direct', guessed: false };
     let name = i.institution, guessed = false, known = name ? byName(name) : null;
     if (!name) {
       if (direct) return { name: 'Held directly', kind: 'direct', guessed: false };
@@ -1039,18 +1060,57 @@
   const P = prefs.proj = Object.assign({ years: 20, ret: 6, infl: 2.5, real: false }, prefs.proj || {});
   const clampNum = (v, lo, hi, d) => { const n = Number(v); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : d; };
 
+  // ---------- Debt paydown ----------
+  // A debt grows at its interest rate (its "Expected return %") and shrinks by its monthly payment. With no payment
+  // but a "Years left", the payment is the one that clears it in that time. A "Written off" date (YYYY or YYYY-MM)
+  // forgives whatever is left then, regardless — e.g. a UK student loan.
+  const monthsUntil = ym => { if (!ym) return null; const [y, m] = ym.split('-').map(Number); const d = new Date(); return Math.max(0, (y - d.getFullYear()) * 12 + ((m || 1) - (d.getMonth() + 1))); };
+  const monthLabel = k => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() + k); return d.toLocaleDateString(undefined, { month: 'short', year: 'numeric' }); };
+  function debtTerms(i, b, monthly) {
+    const rate = i.rate !== null && i.rate !== undefined ? i.rate : 0, rm = Math.pow(1 + rate / 100, 1 / 12) - 1;
+    let pay = monthly !== null && monthly !== undefined ? Number(monthly) : null, calc = false;
+    if (pay === null && i.yearsLeft) { const n = Math.max(1, Math.round(i.yearsLeft * 12)); pay = rm ? b * rm / (1 - Math.pow(1 + rm, -n)) : b / n; calc = true; }
+    return { rm, pay: pay || 0, calc, wo: monthsUntil(i.writeOff) };
+  }
+  // Month-by-month plan in the debt's own currency.
+  function debtPlan(i) {
+    const b0 = Number(i.native !== undefined ? i.native : i.value) || 0;
+    const t = debtTerms(i, b0, i.monthly === null ? null : (i.native !== undefined && i.value ? i.monthly * b0 / i.value : i.monthly));
+    let b = b0, interest = 0, paid = 0;
+    for (let m = 1; m <= 1200; m++) {
+      if (t.wo !== null && m > t.wo) return { end: t.wo, how: 'written off', forgiven: b, interest, paid, pay: t.pay, calc: t.calc };
+      const owed = b * (1 + t.rm); interest += owed - b; const p = Math.min(t.pay, owed); b = owed - p; paid += p;
+      if (b <= 0.005) return { end: m, how: 'paid off', forgiven: 0, interest, paid, pay: t.pay, calc: t.calc };
+      if (m === 24 && b >= b0 && t.wo === null) return { end: null, how: 'growing', forgiven: 0, interest, paid, pay: t.pay, calc: t.calc };
+    }
+    return { end: null, how: 'not within 100 years', forgiven: 0, interest, paid, pay: t.pay, calc: t.calc };
+  }
+  function planText(i) {
+    if (i.kind !== 'debt' || !(Number(i.native !== undefined ? i.native : i.value) > 0)) return '';
+    const p = debtPlan(i), c = i.currency, f = n => fmtIn(n, c);
+    if (p.how === 'growing') return p.pay ? 'Payment doesn’t cover the interest' : 'No payment or end date set';
+    if (p.end === null) return 'Not paid off within 100 years';
+    const when = monthLabel(p.end);
+    const pay = p.calc ? ` at ${f(p.pay)}/mo` : '';
+    return p.how === 'written off' ? `Written off ${when}${p.forgiven > 0.5 ? ` · ~${f(p.forgiven)} forgiven` : ''}${pay}` : `Paid off ${when}${pay}${p.interest > 0.5 ? ` · ${f(p.interest)} interest` : ''}`;
+  }
+
   // Monthly compounding; contributions/payments at month end. Returns one point per year (0..years).
   function project(list, years, defaultRet, infl, real) {
     const state = list.map(i => {
       const isDebt = i.kind === 'debt';
       const rate = i.rate !== null && i.rate !== undefined ? i.rate : (isDebt ? 0 : (NO_GROWTH.includes(mainBucket(i)) || ['Vehicles', 'Collectibles'].includes(i.category) ? 0 : defaultRet));
+      if (isDebt) { const t = debtTerms(i, Number(i.value) || 0, i.monthly); return { isDebt, b: Number(i.value) || 0, rm: t.rm, c: t.pay, wo: t.wo }; }
       return { isDebt, b: Number(i.value) || 0, rm: Math.pow(1 + rate / 100, 1 / 12) - 1, c: Number(i.monthly) || 0 };
     });
     const start = state.reduce((a, s) => a + (s.isDebt ? -s.b : s.b), 0);
     const pts = []; let added = 0;
     for (let m = 0; m <= years * 12; m++) {
       if (m > 0) for (const s of state) {
-        if (s.isDebt) { const owed = s.b * (1 + s.rm); const pay = Math.min(s.c, owed); s.b = owed - pay; added += pay; }
+        if (s.isDebt) {
+          if (s.wo !== null && m > s.wo) { s.b = 0; continue; }          // written off
+          const owed = s.b * (1 + s.rm); const pay = Math.min(s.c, owed); s.b = owed - pay; added += pay;
+        }
         else { s.b = s.b * (1 + s.rm) + s.c; added += s.c; }
       }
       if (m % 12 === 0) {
@@ -1167,7 +1227,7 @@
       ['totAssets', 'totDebts', 'totNet'].forEach(id => { $(id).textContent = '—'; });
       $('mixSection').hidden = true; $('xpSection').hidden = true; $('cpSection').hidden = true; $('retSection').hidden = true; $('efSection').hidden = true; $('projSection').hidden = true; $('projTip').hidden = true; $('fxNote').hidden = true;
       [...$('projChart').querySelectorAll('svg')].forEach(n => n.remove()); $('projTable').textContent = ''; $('projHeadline').textContent = '';
-      ['assets', 'debts', 'assetMix', 'lookBar', 'lookTable', 'mixHint', 'fName', 'fNote', 'fVal', 'fAcct', 'fFund', 'fOwner', 'fTicker', 'fShares', 'fRate', 'fMonthly', 'fRet12', 'fRet5', 'fRetHint', 'cpList', 'cpUninsured', 'cpUninsuredSub', 'cpTop', 'cpTopSub', 'cpNote', 'fInst', 'instList', 'xpCountry', 'xpCurrency', 'xpCountryNote', 'xpSpend', 'xpNote', 'retTable', 'retAll', 'retAllSub', 'retFunds', 'retFundsSub', 'retNote', 'efList', 'efCalc', 'asName', 'asAmt', 'asNote', 'efMonths', 'efUnit', 'efSub', 'efAll', 'efBar', 'efVerdict', 'efFundInfo', 'efPickList', 'eName', 'eAmt', 'eOwner', 'eNote', 'tidyList', 'fxList', 'fxText', 'acctList', 'ownerList', 'fundList']
+      ['assets', 'debts', 'assetMix', 'lookBar', 'lookTable', 'mixHint', 'fName', 'fNote', 'fVal', 'fAcct', 'fFund', 'fOwner', 'fTicker', 'fShares', 'fRate', 'fMonthly', 'fYears', 'fWO', 'debtPlan', 'fRet12', 'fRet5', 'fRetHint', 'cpList', 'cpUninsured', 'cpUninsuredSub', 'cpTop', 'cpTopSub', 'cpNote', 'fInst', 'instList', 'xpCountry', 'xpCurrency', 'xpCountryNote', 'xpSpend', 'xpNote', 'retTable', 'retAll', 'retAllSub', 'retFunds', 'retFundsSub', 'retNote', 'efList', 'efCalc', 'asName', 'asAmt', 'asNote', 'efMonths', 'efUnit', 'efSub', 'efAll', 'efBar', 'efVerdict', 'efFundInfo', 'efPickList', 'eName', 'eAmt', 'eOwner', 'eNote', 'tidyList', 'fxList', 'fxText', 'acctList', 'ownerList', 'fundList']
         .forEach(id => { const el = $(id); if (el.tagName === 'INPUT') el.value = ''; else el.textContent = ''; });
       return;
     }
@@ -1178,7 +1238,7 @@
     $('totNet').textContent = fmt(a - d);
     $('tidyBtn').hidden = !items.some(i => i.kind === 'asset');
     renderFxNote(vis);
-    renderMix(); renderLookThrough(); renderExposure(); renderCounterparty(); renderReturns(); renderEmergency(); renderProjection(); renderList('asset'); renderList('debt');
+    renderMix(); renderLookThrough(); renderExposure(); renderCounterparty(); renderReturns(); renderEmergency(); renderProjection(); renderList('asset'); renderList('debt'); renderDebtPlan();
   }
 
   // Generic busy wrapper for form buttons
@@ -1334,6 +1394,10 @@
     $('fShares').value = item && item.shares !== null ? item.shares : '';
     $('fRate').value = item && item.rate !== null ? item.rate : '';
     $('fMonthly').value = item && item.monthly !== null ? item.monthly : '';
+    $('fDebtWrap').hidden = kind !== 'debt';
+    $('fYears').value = item && item.yearsLeft !== null ? item.yearsLeft : '';
+    $('fWO').value = item ? item.writeOff : '';
+    $('fMonthly').placeholder = kind === 'debt' ? 'Blank = work out from years left' : '0';
     $('fRet12').value = item && item.ret12 !== null ? item.ret12 : '';
     $('fRet5').value = item && item.ret5 !== null ? item.ret5 : '';
     $('fRetWrap').hidden = kind === 'debt';
@@ -1378,12 +1442,14 @@
       accountType: $('fAcct').value, fund: $('fFund').value, owner: $('fOwner').value, institution: $('fInst').value,
       ticker: $('fTicker').value, shares: $('fShares').value,
       rate: $('fRate').value, monthly: $('fMonthly').value,
+      yearsLeft: editKind === 'debt' ? $('fYears').value : '', writeOff: editKind === 'debt' ? $('fWO').value : '',
       assetClass: editKind === 'asset' ? $('fClass').value : '',
       currency: $('fCur').value,
       assetClassNote: editingId ? (items.find(i => i.id === editingId) || {}).assetClassNote : '',
       ...retFields()
     });
     if (editKind === 'asset' && (($('fRet12').value !== '' && d.ret12 === null) || ($('fRet5').value !== '' && d.ret5 === null))) { $('itemErr').textContent = 'Returns must be between -100% and 10000%.'; return; }
+    if (editKind === 'debt' && $('fWO').value.trim() && !d.writeOff) { $('itemErr').textContent = 'Enter the write-off date as a year (2039) or year-month (2039-04).'; return; }
     if ($('fRate').value !== '' && d.rate === null) { $('itemErr').textContent = 'Enter a rate between -50% and 50%.'; return; }
     if ($('fTicker').value.trim() && !d.ticker) { $('itemErr').textContent = 'Tickers are letters/numbers only, e.g. VTTSX.'; return; }
     try {
