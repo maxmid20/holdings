@@ -29,7 +29,7 @@ Create a new base, for example "Holdings", with one table named **`Items`** and 
 | `Price`, `Priced on` | Number / text, written by the daily sync |
 | `Expected return %` | Number (2 dp, negatives allowed), optional. For a debt, this is its interest rate |
 | `Monthly contribution` | Number (2 dp), optional. For a debt, this is its monthly payment |
-| `Currency` | Single line text, optional. A currency code: USD, AUD, EUR, GBP, CAD, NZD, JPY, CHF, SGD, HKD, INR, or BTC for bitcoin held directly (Value = the number of coins, e.g. 0.25). Blank means USD. `Value` and `Monthly contribution` are in this currency |
+| `Currency` | Single line text, optional. A currency code: USD, AUD, EUR, GBP, CAD, NZD, JPY, CHF, SGD, HKD, INR, BTC for bitcoin held directly (Value = the number of coins, e.g. 0.25), or XAU for physical gold (Value = troy ounces, e.g. 2.5). Blank means USD. `Value` and `Monthly contribution` are in this currency |
 | `12-month return %`, `5-year return %` | Number (2 dp, negatives allowed), optional. Trailing total returns; the 5-year figure is per year. Filled in monthly by the daily sync for holdings with a ticker or in BTC, or typed by you |
 | `Return as of`, `Return source` | Single line text, written with the returns (`Auto (…)` from the sync, `Manual` if you typed them; the sync never overwrites Manual) |
 | `Asset class` | Single line text, optional. One of: US stocks, International stocks, Equities, US bonds, International bonds, Bonds, Cash, Property, Gold, Commodities, Bitcoin, Crypto, Other. Set by **Tidy up** or the Bucket picker |
@@ -44,11 +44,11 @@ Rates live in a small **FX rates** table, one row per currency:
 |---|---|
 | `Currency` | Single line text (primary field), e.g. `AUD` |
 | `Per USD` | Number (6 decimal places): how many of that currency 1 US dollar buys, e.g. 1.53 |
-| `USD each` | Number (2 decimal places): used for bitcoin instead of `Per USD`, the dollar price of 1 BTC, e.g. 82644.65 |
+| `USD each` | Number (2 decimal places): used for bitcoin and gold instead of `Per USD`: the dollar price of 1 BTC or 1 troy ounce of gold (XAU), e.g. 4168.00 |
 | `As of` | Single line text, e.g. 2026-10-17 |
 | `Source` | `Auto (…)` from the daily sync, or `Manual` for a rate you typed |
 
-The daily sync refreshes the rates every weekday: currencies from the European Central Bank (through the free Frankfurter service), and bitcoin from Alpha Vantage (falling back to CoinGecko). You can also set or override a rate under **Exchange rates** (below the totals). A manual rate is kept until you choose "Use the daily rate instead". Until a currency has a rate, its holdings are left out of the totals and the app says so. In browser-only mode, rates you type are kept in this browser.
+The daily sync refreshes the rates every weekday: currencies from the European Central Bank (through the free Frankfurter service), bitcoin from Alpha Vantage (falling back to CoinGecko), and gold from Alpha Vantage's spot price. You can also set or override a rate under **Exchange rates** (below the totals). A manual rate is kept until you choose "Use the daily rate instead". Until a currency has a rate, its holdings are left out of the totals and the app says so. In browser-only mode, rates you type are kept in this browser.
 
 ## Buckets
 

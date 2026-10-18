@@ -17,9 +17,11 @@
     debt: ['Mortgage', 'Auto loan', 'Student loan', 'Credit card', 'Personal loan', 'Other']
   };
   const COLORS = ['#2f5d50', '#c8963e', '#5b7fa6', '#a65b7f', '#6e9c4f', '#8a6fbf', '#c46a4a', '#7a7a7a'];
-  const CURRENCIES = ['USD', 'AUD', 'EUR', 'GBP', 'CAD', 'NZD', 'JPY', 'CHF', 'SGD', 'HKD', 'INR', 'BTC'];
-  const DISPLAY_CURRENCIES = CURRENCIES.filter(c => c !== 'BTC');   // totals are shown in a regular currency
-  const PRICED = ['BTC'];                    // rates entered as "1 BTC = $X" rather than "1 USD = X"
+  const CURRENCIES = ['USD', 'AUD', 'EUR', 'GBP', 'CAD', 'NZD', 'JPY', 'CHF', 'SGD', 'HKD', 'INR', 'BTC', 'XAU'];
+  const PRICED = ['BTC', 'XAU'];             // bitcoin and gold (XAU = 1 troy ounce): rates entered as "1 unit = $X"
+  const DISPLAY_CURRENCIES = CURRENCIES.filter(c => !PRICED.includes(c));   // totals are shown in a regular currency
+  const UNIT = { BTC: '1 BTC', XAU: '1 oz gold' };
+  const CUR_LABEL = { BTC: 'BTC (bitcoin)', XAU: 'XAU (gold, troy oz)' };
   const BASE_CUR = 'USD';                    // a holding with no Currency is in US dollars; rates are per 1 USD
   const curOf = c => { const x = String(c || '').trim().toUpperCase(); return CURRENCIES.includes(x) ? x : BASE_CUR; };
 
@@ -207,6 +209,8 @@
   function mixFor(i) {
     if (i.ticker && breakdown[i.ticker]) return breakdown[i.ticker].mix;
     if (i.assetClass) return { [i.assetClass]: 100 };
+    if (i.currency === 'XAU') return { Gold: 100 };          // gold held in ounces
+    if (i.currency === 'BTC') return { Bitcoin: 100 };       // bitcoin held directly
     return { [CATEGORY_CLASS[i.category] || 'Other']: 100 };
   }
   // The bucket a holding mostly belongs to ('Multi-asset' when no bucket reaches 90%).
@@ -355,6 +359,7 @@
   // ---------- Rendering ----------
   const fmtIn = (n, c) => c === 'BTC'
     ? '₿' + new Intl.NumberFormat(undefined, { maximumFractionDigits: 8 }).format(n)
+    : c === 'XAU' ? new Intl.NumberFormat(undefined, { maximumFractionDigits: 3 }).format(n) + ' oz gold'
     : new Intl.NumberFormat(undefined, { style: 'currency', currency: c, maximumFractionDigits: 0 }).format(n);
   const fmt = n => fmtIn(n, dispCur());
 
@@ -837,9 +842,9 @@
     const auto = item && item.retSource && !/^manual/i.test(item.retSource);
     $('fRetHint').textContent = !item ? 'Holdings with a ticker (or in bitcoin) get these from the daily sync each month. Otherwise, enter them yourself.'
       : /^manual/i.test(item.retSource) ? `Entered by you${item.retAsOf ? ' on ' + item.retAsOf : ''}. The sync leaves these alone.`
-        : auto && item.ret12 !== null ? `From ${item.ticker || 'bitcoin'}'s price history, to ${item.retAsOf || 'last month-end'} (total return, dividends reinvested). Typing a value keeps yours instead.`
+        : auto && item.ret12 !== null ? `From ${item.ticker || ({ BTC: 'bitcoin', XAU: 'gold' }[item.currency]) || 'its'}'s price history, to ${item.retAsOf || 'last month-end'} (total return, dividends reinvested). Typing a value keeps yours instead.`
           : auto ? `No price history found for ${item.ticker || 'this holding'}; enter the returns yourself if you know them.`
-            : item.ticker || item.currency === 'BTC' ? 'The daily sync fills these in monthly. You can also enter them yourself.' : 'Enter the published returns if you know them, e.g. from the fund’s website.';
+            : item.ticker || PRICED.includes(item.currency) ? 'The daily sync fills these in monthly. You can also enter them yourself.' : 'Enter the published returns if you know them, e.g. from the fund’s website.';
     const r5 = item && item.ret5 !== null ? item.ret5 : null;
     $('fUse5').hidden = kind === 'debt' || r5 === null || r5 < -50 || r5 > 50;
     if (r5 !== null) $('fUse5').textContent = `Use the 5-year average (${fmtPct(r5)})`;
@@ -977,7 +982,7 @@
   // ---------- Currency ----------
   const cur = $('currency');
   for (const c of CURRENCIES) {
-    const o = document.createElement('option'); o.value = c; o.textContent = c === 'BTC' ? 'BTC (bitcoin)' : c; $('fCur').append(o);
+    const o = document.createElement('option'); o.value = c; o.textContent = CUR_LABEL[c] || c; $('fCur').append(o);
     if (DISPLAY_CURRENCIES.includes(c)) { const d = document.createElement('option'); d.textContent = c; cur.append(d); }
   }
   cur.value = prefs.currency;
@@ -998,7 +1003,7 @@
       if (!rateOf(prefs.currency)) bits.push(`showing ${BASE_CUR} instead of ${prefs.currency}`);
       $('fxText').textContent = bits.join(': ') + '.';
     } else {
-      const pairs = need.map(c => PRICED.includes(c) ? `1 ${c} = ${fmtIn(1 / rateOf(c), BASE_CUR)}` : `1 ${BASE_CUR} = ${fmtRate(rateOf(c))} ${c}`).join(' · ');
+      const pairs = need.map(c => PRICED.includes(c) ? `${UNIT[c]} = ${fmtIn(1 / rateOf(c), BASE_CUR)}` : `1 ${BASE_CUR} = ${fmtRate(rateOf(c))} ${c}`).join(' · ');
       const dates = need.map(c => fx[c] && fx[c].asOf).filter(Boolean).sort();
       $('fxText').textContent = `Converted to ${dispCur()} at ${pairs}${dates.length ? ` (as of ${dates[0]})` : ''}.`;
     }
@@ -1012,9 +1017,9 @@
       const e = fx[code];
       const row = document.createElement('div'); row.className = 'fx-row';
       const priced = PRICED.includes(code);   // bitcoin: "1 BTC = $X" reads better than "1 USD = 0.0000121 BTC"
-      const lab = document.createElement('label'); lab.htmlFor = 'fx-' + code; lab.textContent = priced ? `1 ${code} =` : `1 ${BASE_CUR} =`;
+      const lab = document.createElement('label'); lab.htmlFor = 'fx-' + code; lab.textContent = priced ? `${UNIT[code]} =` : `1 ${BASE_CUR} =`;
       const inp = document.createElement('input'); inp.id = 'fx-' + code; inp.type = 'number'; inp.step = 'any'; inp.min = '0'; inp.inputMode = 'decimal';
-      inp.value = e ? String(priced ? round(1 / e.rate, 2) : e.rate) : ''; inp.placeholder = 'e.g. ' + ({ AUD: '1.55', EUR: '0.92', GBP: '0.78', CAD: '1.38', NZD: '1.70', JPY: '150', BTC: '80000' }[code] || '1.00');
+      inp.value = e ? String(priced ? round(1 / e.rate, 2) : e.rate) : ''; inp.placeholder = 'e.g. ' + ({ AUD: '1.55', EUR: '0.92', GBP: '0.78', CAD: '1.38', NZD: '1.70', JPY: '150', BTC: '80000', XAU: '4000' }[code] || '1.00');
       const unit = document.createElement('span'); unit.textContent = priced ? BASE_CUR : code;
       const meta = document.createElement('div'); meta.className = 'fx-meta' + (e ? '' : ' warn'); meta.textContent = srcLabel(e);
       const r = { code, inp, start: inp.value, reset: false, priced };
@@ -1041,7 +1046,7 @@
       if (r.reset && t === r.start) { changes.push({ code: r.code, rate: toRate(Number(t)), source: 'Auto' }); continue; }
       if (t === r.start) continue;
       const n = toRate(Number(t));
-      if (!fxOk(n)) { $('fxErr').textContent = r.priced ? `Enter what one ${r.code} is worth in ${BASE_CUR}, e.g. 80000.` : `Enter how many ${r.code} one ${BASE_CUR} buys, e.g. 1.55.`; r.inp.focus(); return; }
+      if (!fxOk(n)) { $('fxErr').textContent = r.priced ? `Enter what ${UNIT[r.code].replace('1 ', 'one ')} is worth in ${BASE_CUR}.` : `Enter how many ${r.code} one ${BASE_CUR} buys, e.g. 1.55.`; r.inp.focus(); return; }
       changes.push({ code: r.code, rate: n, source: 'Manual' });
     }
     if (!changes.length) { $('fxDlg').close(); return; }
