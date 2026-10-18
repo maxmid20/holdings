@@ -6,8 +6,8 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://api.airtable.com; form-action 'none'; base-uri 'none'; object-src 'none'">
 <meta name="referrer" content="no-referrer">
 <title>Holdings</title>
-<link rel="stylesheet" href="styles.css?v=2026-10-18i">
-<script src="app.js?v=2026-10-18i" defer></script>
+<link rel="stylesheet" href="styles.css?v=2026-10-18j">
+<script src="app.js?v=2026-10-18j" defer></script>
 </head>
 <body>
 <div class="wrap">
@@ -61,6 +61,18 @@
         </div>
       </div>
       <p class="hint" id="xpNote"></p>
+    </div>
+    <div class="section" id="cpSection" hidden>
+      <div class="section-head"><h2>Counterparty risk</h2><span class="hint">Who holds your money, and how it’s protected</span></div>
+      <div class="card">
+        <div class="ret-stats">
+          <div><div class="label">Uninsured bank deposits</div><div class="ret-big" id="cpUninsured"></div><div class="hint" id="cpUninsuredSub"></div></div>
+          <div><div class="label">Largest institution</div><div class="ret-big" id="cpTop"></div><div class="hint" id="cpTopSub"></div></div>
+        </div>
+        <div class="cp-legend"><span><i class="cp-ins"></i>Insured</span><span><i class="cp-seg"></i>Held in custody / trust</span><span><i class="cp-un"></i>Uninsured</span><span><i class="cp-dir"></i>Held directly / not set</span></div>
+        <div class="cp-list" id="cpList" role="list"></div>
+        <p class="hint" id="cpNote"></p>
+      </div>
     </div>
     <div class="section" id="retSection" hidden>
       <div class="section-head"><h2>Returns</h2><span class="hint">Last 12 months · past returns, not a forecast</span></div>
@@ -152,9 +164,10 @@
       </div>
       <p class="hint ret-hint" id="fRetHint"></p>
     </div>
+    <div class="field"><label for="fInst">Institution (who holds it)</label><input id="fInst" maxlength="80" list="instList" placeholder="e.g. Vanguard, Fidelity, Chase" autocomplete="off"></div>
     <div class="field"><label for="fFund">Fund / holding</label><input id="fFund" maxlength="120" list="fundList" placeholder="e.g. Vanguard Target Retirement 2060" autocomplete="off"></div>
     <div class="field"><label for="fNote">Note (optional)</label><input id="fNote" maxlength="300" placeholder="Institution, address…" autocomplete="off"></div>
-    <datalist id="acctList"></datalist><datalist id="ownerList"></datalist><datalist id="fundList"></datalist>
+    <datalist id="acctList"></datalist><datalist id="instList"></datalist><datalist id="ownerList"></datalist><datalist id="fundList"></datalist>
     <p class="form-err" id="itemErr"></p>
     <div class="actions">
       <button type="button" class="btn danger" id="itemDel" hidden>Delete</button>

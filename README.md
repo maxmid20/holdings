@@ -30,6 +30,7 @@ Create a new base, for example "Holdings", with one table named **`Items`** and 
 | `Expected return %` | Number (2 dp, negatives allowed), optional. For a debt, this is its interest rate |
 | `Monthly contribution` | Number (2 dp), optional. For a debt, this is its monthly payment |
 | `Currency` | Single line text, optional. A currency code: USD, AUD, EUR, GBP, CAD, NZD, JPY, CHF, SGD, HKD, INR, BTC for bitcoin held directly (Value = the number of coins, e.g. 0.25), or XAU for physical gold (Value = troy ounces, e.g. 2.5). Blank means USD. `Value` and `Monthly contribution` are in this currency |
+| `Institution` | Single line text, optional. Who holds the asset, e.g. Vanguard, Fidelity, Empower, Chase, NAB. Used by Counterparty risk; if blank, the app guesses from the name, account type, fund or note |
 | `12-month return %`, `5-year return %` | Number (2 dp, negatives allowed), optional. Trailing total returns; the 5-year figure is per year. Filled in monthly by the daily sync for holdings with a ticker or in BTC, or typed by you |
 | `Return as of`, `Return source` | Single line text, written with the returns (`Auto (…)` from the sync, `Manual` if you typed them; the sync never overwrites Manual) |
 | `Asset class` | Single line text, optional. One of: US stocks, International stocks, Equities, US bonds, International bonds, Bonds, Cash, Property, Gold, Commodities, Bitcoin, Crypto, Other. Set by **Tidy up** or the Bucket picker |
@@ -80,6 +81,17 @@ Two look-through views of your net worth, net of debts: **by country** (where th
 - **Unspecified shares or bonds** count as the whole world in a US fund, and as the home market in a non-US fund (e.g. Aware Super).
 - **Cash, property and "other"** count in the holding's own country and currency. **Gold** (XAU) and **bitcoin** (BTC) are stateless and show as their own currencies. **Commodities** count as global, priced in USD. **Debts** subtract in their own country and currency (a GBP loan is a short position in GBP).
 - The currency card compares your holdings with the currencies you **spend** in (from the Expenses table) and shows how much of your net worth sits outside them.
+
+## Counterparty risk
+
+Shows who holds your money and how it's protected if that institution fails, one bar per institution:
+
+- **Insured:** bank deposits within the deposit-insurance limit. The limit is per depositor, per bank, per ownership category: **FDIC** US$250,000 (US banks), **FCS** A$250,000 (Australian banks), **FSCS** £120,000 (UK banks). A holding with Owner = Joint counts as two depositors.
+- **Held in custody / trust:** brokerage accounts (Vanguard, Fidelity, Schwab…), 401(k)/403(b) plans (Empower…) and super funds (Aware Super…). These assets are held for you, not lent to the institution. US brokers add **SIPC** cover up to US$500,000 if assets go missing in a failure.
+- **Uninsured:** deposits above the limit, and anything at a crypto exchange.
+- **Held directly / not set:** property, physical gold and self-custodied bitcoin, plus holdings without an institution.
+
+Set each holding's **Institution** in its edit form. If it's blank, the app guesses from well-known names (marked *). The headline shows your uninsured bank deposits and your largest single institution. This is a guide, not legal advice; check each bank is covered by its scheme.
 
 ## Emergency fund
 

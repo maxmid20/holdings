@@ -75,6 +75,7 @@
       // Your own label in Airtable's Asset class (e.g. "Superannuation") isn't a bucket, but is kept as written.
       assetClassNote: normClass(String((raw && raw.assetClass) || '').trim()) ? '' : String((raw && (raw.assetClassNote || raw.assetClass)) || '').trim().slice(0, 60),
       currency: curOf(raw && raw.currency),
+      institution: String((raw && raw.institution) || '').trim().slice(0, 80),
       ret12: pctOrNull(raw && raw.ret12),
       ret5: pctOrNull(raw && raw.ret5),
       retAsOf: /^\d{4}-\d{2}/.test(String((raw && raw.retAsOf) || '')) ? String(raw.retAsOf).slice(0, 10) : '',
@@ -213,16 +214,32 @@
       accountType: r.fields['Account type'], fund: r.fields.Fund, owner: r.fields.Owner,
       ticker: r.fields.Ticker, shares: r.fields.Shares, price: r.fields.Price, pricedOn: r.fields['Priced on'],
       rate: r.fields['Expected return %'], monthly: r.fields['Monthly contribution'], assetClass: r.fields['Asset class'],
-      currency: r.fields.Currency,
+      currency: r.fields.Currency, institution: r.fields.Institution,
       ret12: r.fields['12-month return %'], ret5: r.fields['5-year return %'],
       retAsOf: r.fields['Return as of'], retSource: r.fields['Return source']
     })
   });
-  const toFields = d => ({
+  // Optional columns your Items table may not have yet. If Airtable reports one as unknown, we stop sending it,
+  // retry the save, and tell you which column to add (see itemsWrite).
+  const OPTIONAL_FIELDS = ['Institution'];
+  const missingFields = new Set();
+  const toFields = d => { const f = toFieldsAll(d); for (const k of missingFields) delete f[k]; if (!f.Institution) delete f.Institution; return f; };
+  async function itemsWrite(fn) {
+    try { return await fn(); }
+    catch (x) {
+      const m = /Unknown field name: "([^"]+)"/i.exec(x.message || '');
+      if (!m || !OPTIONAL_FIELDS.includes(m[1]) || missingFields.has(m[1])) throw x;
+      missingFields.add(m[1]);
+      const out = await fn();
+      showBanner(`Saved, except "${m[1]}": add a single-line text field named “${m[1]}” to your Items table in Airtable so it can be stored.`, 'info');
+      return out;
+    }
+  }
+  const toFieldsAll = d => ({
     Name: d.name, Kind: d.kind === 'debt' ? 'Debt' : 'Asset', Category: d.category, Value: d.value, Note: d.note,
     'Account type': d.accountType, Fund: d.fund, Owner: d.owner, Ticker: d.ticker, Shares: d.shares,
     'Expected return %': d.rate, 'Monthly contribution': d.monthly, 'Asset class': d.assetClass || d.assetClassNote || null,
-    Currency: d.currency && d.currency !== BASE_CUR ? d.currency : null,
+    Currency: d.currency && d.currency !== BASE_CUR ? d.currency : null, Institution: d.institution || null,
     '12-month return %': d.ret12, '5-year return %': d.ret5, 'Return as of': d.retAsOf || null, 'Return source': d.retSource || null
   });
 
@@ -414,7 +431,7 @@
   async function atCreateMany(list) {
     const created = [];
     for (let i = 0; i < list.length; i += 10) {
-      const j = await at(tablePath(session), { method: 'POST', body: { records: list.slice(i, i + 10).map(d => ({ fields: toFields(d) })), typecast: true } });
+      const j = await itemsWrite(() => at(tablePath(session), { method: 'POST', body: { records: list.slice(i, i + 10).map(d => ({ fields: toFields(d) })), typecast: true } }));
       for (const r of j.records || []) created.push(fromRecord(r));
     }
     return created;
@@ -428,7 +445,7 @@
   async function updateItem(id, d) {
     if (mode === 'airtable') {
       if (!REC_RE.test(id)) throw new Error('Invalid record');
-      const r = await at(`${tablePath(session)}/${id}`, { method: 'PATCH', body: { fields: toFields(d), typecast: true } });
+      const r = await itemsWrite(() => at(`${tablePath(session)}/${id}`, { method: 'PATCH', body: { fields: toFields(d), typecast: true } }));
       const i = items.findIndex(x => x.id === id); if (i >= 0) items[i] = fromRecord(r);
     } else {
       const i = items.findIndex(x => x.id === id); if (i >= 0) items[i] = { id, ...d };
@@ -645,6 +662,129 @@
     $('xpSpend').textContent = nw > 0 ? `You spend in ${spendTxt}${expView().some(e => e.monthly) ? '' : ' (your display currency; add expenses to refine)'}. ${Math.round(outside / nw * 100)}% of your net worth sits in other currencies or in gold and bitcoin, so exchange-rate moves change what it buys for you.` : '';
     const intl = list.some(i => i.kind === 'asset' && Object.keys(mixFor(i)).some(c => c.startsWith('International') || c === 'Equities'));
     $('xpNote').textContent = 'Look-through estimates, net of debts.' + (intl ? ' International and global shares are split using approximate world stock-market weights, assumed unhedged; international bonds are assumed hedged to the fund’s currency.' : '') + ' Unspecified shares in a non-US fund (e.g. Aware Super’s) are counted as its home market.';
+  }
+
+  // ---------- Counterparty risk ----------
+  // Who would you be exposed to if an institution failed? Each asset is assigned to an institution (its Institution
+  // field, or a guess from its name / account / fund / note), then classified:
+  //  - insured: bank deposits within the deposit-insurance limit (FDIC US$250k, FCS A$250k, FSCS £120k per depositor
+  //    per bank; joint accounts count twice);
+  //  - segregated: assets a broker, retirement plan or super fund holds for you in custody or trust (not lent to the
+  //    institution; SIPC adds up to US$500k cover if a US broker fails with assets missing);
+  //  - uninsured: deposits above the limit, and anything at a crypto exchange;
+  //  - held directly: property, physical gold, self-custodied bitcoin.
+  const INST = [
+    // US banks (FDIC)
+    { re: /ivy\s*bank/i, name: 'Ivy Bank', kind: 'bank' }, { re: /\bsofi\b/i, name: 'SoFi Bank', kind: 'bank' },
+    { re: /\bamex\b|american express/i, name: 'American Express', kind: 'bank' }, { re: /\bchase\b|jp\s*morgan/i, name: 'Chase', kind: 'bank' },
+    { re: /bank of america|\bbofa\b/i, name: 'Bank of America', kind: 'bank' }, { re: /wells\s*fargo/i, name: 'Wells Fargo', kind: 'bank' },
+    { re: /\bciti(bank)?\b/i, name: 'Citi', kind: 'bank' }, { re: /capital\s*one/i, name: 'Capital One', kind: 'bank' },
+    { re: /\bally\b/i, name: 'Ally', kind: 'bank' }, { re: /\bmarcus\b|goldman/i, name: 'Marcus (Goldman Sachs)', kind: 'bank' },
+    { re: /\bdiscover\b/i, name: 'Discover', kind: 'bank' }, { re: /\bbarclays\b/i, name: 'Barclays', kind: 'bank' },
+    { re: /\bhsbc\b/i, name: 'HSBC', kind: 'bank' }, { re: /\bwise\b/i, name: 'Wise', kind: 'emoney' },
+    // US brokers & plan recordkeepers
+    { re: /vanguard/i, name: 'Vanguard', kind: 'broker' }, { re: /fidelity/i, name: 'Fidelity', kind: 'broker' },
+    { re: /schwab/i, name: 'Schwab', kind: 'broker' }, { re: /e\*?\s*trade/i, name: 'E*Trade', kind: 'broker' },
+    { re: /robinhood/i, name: 'Robinhood', kind: 'broker' }, { re: /interactive brokers|\bibkr\b/i, name: 'Interactive Brokers', kind: 'broker' },
+    { re: /merrill/i, name: 'Merrill', kind: 'broker' }, { re: /empower/i, name: 'Empower', kind: 'plan' },
+    { re: /principal/i, name: 'Principal', kind: 'plan' }, { re: /\bvoya\b/i, name: 'Voya', kind: 'plan' }, { re: /\btiaa\b/i, name: 'TIAA', kind: 'plan' },
+    // Australia
+    { re: /\bnab\b|national australia/i, name: 'NAB', kind: 'bank' }, { re: /\bcba\b|commonwealth bank|commbank/i, name: 'Commonwealth Bank', kind: 'bank' },
+    { re: /westpac/i, name: 'Westpac', kind: 'bank' }, { re: /\banz\b/i, name: 'ANZ', kind: 'bank' }, { re: /macquarie/i, name: 'Macquarie', kind: 'bank' },
+    { re: /\bing\b/i, name: 'ING', kind: 'bank' }, { re: /\bubank\b/i, name: 'ubank', kind: 'bank' },
+    { re: /aware\s*super/i, name: 'Aware Super', kind: 'super' }, { re: /australian\s*super/i, name: 'AustralianSuper', kind: 'super' },
+    { re: /hostplus/i, name: 'Hostplus', kind: 'super' }, { re: /unisuper/i, name: 'UniSuper', kind: 'super' }, { re: /\brest\b super/i, name: 'Rest', kind: 'super' },
+    // UK
+    { re: /lloyds/i, name: 'Lloyds', kind: 'bank' }, { re: /monzo/i, name: 'Monzo', kind: 'bank' }, { re: /nationwide/i, name: 'Nationwide', kind: 'bank' },
+    { re: /hargreaves/i, name: 'Hargreaves Lansdown', kind: 'broker' },
+    // crypto
+    { re: /coinbase/i, name: 'Coinbase', kind: 'crypto' }, { re: /kraken/i, name: 'Kraken', kind: 'crypto' }, { re: /binance/i, name: 'Binance', kind: 'crypto' },
+  ];
+  const DEPOSIT_LIMIT = { USD: { amt: 250000, cur: 'USD', scheme: 'FDIC' }, AUD: { amt: 250000, cur: 'AUD', scheme: 'FCS' }, GBP: { amt: 120000, cur: 'GBP', scheme: 'FSCS' } };
+  // Which institution holds this asset, and how it's protected.
+  function institutionOf(i) {
+    const direct = (mainBucket(i) === 'Property' && !i.ticker) || PRICED.includes(i.currency) || /^owned$/i.test(i.category || '');
+    const byName = n => INST.find(x => x.re.test(n));
+    let name = i.institution, guessed = false, known = name ? byName(name) : null;
+    if (!name) {
+      if (direct) return { name: 'Held directly', kind: 'direct', guessed: false };
+      const hit = [i.accountType, i.name, i.fund, i.note].map(t => t && byName(t)).find(Boolean);
+      if (hit) { name = hit.name; known = hit; guessed = true; }
+    }
+    if (!name) return { name: 'Institution not set', kind: 'unknown', guessed: false };
+    const cash = mainBucket(i) === 'Cash';
+    let kind = known ? known.kind : (cash ? 'bank' : /retire|401|ira|pension|super/i.test([i.category, i.accountType].join(' ')) ? 'plan' : 'broker');
+    if (kind === 'broker' && /retire|401|403|457/i.test([i.category, i.accountType].join(' ')) && i.currency !== 'AUD') kind = 'plan';
+    return { name: known && !i.institution ? known.name : name, kind, guessed };
+  }
+  const KIND_LABEL = { bank: 'Bank deposits', broker: 'Brokerage (custody)', plan: 'Retirement plan (trust)', super: 'Super fund (trust)',
+    crypto: 'Crypto exchange', emoney: 'E-money (safeguarded)', direct: 'You hold it', unknown: 'Add an institution' };
+  function counterparty(list) {
+    const inst = {};
+    for (const i of list) {
+      if (i.kind !== 'asset' || !(i.value > 0)) continue;
+      const g = institutionOf(i);
+      const e = inst[g.name] || (inst[g.name] = { name: g.name, kinds: new Set(), guessed: false, total: 0, insured: 0, segregated: 0, uninsured: 0, direct: 0, deposits: {}, n: 0 });
+      e.kinds.add(g.kind); e.guessed = e.guessed || g.guessed; e.total += i.value; e.n++;
+      if (g.kind === 'bank') {
+        const owner = i.owner || 'Myself', key = i.currency + '|' + owner;
+        (e.deposits[key] = e.deposits[key] || { cur: i.currency, owner, v: 0 }).v += i.value;
+      } else if (g.kind === 'broker' || g.kind === 'plan' || g.kind === 'super' || g.kind === 'emoney') e.segregated += i.value;
+      else if (g.kind === 'crypto') e.uninsured += i.value;
+      else e.direct += i.value;   // held directly or institution not set
+    }
+    for (const e of Object.values(inst)) {
+      e.limits = [];
+      for (const d of Object.values(e.deposits)) {
+        const L = DEPOSIT_LIMIT[d.cur];
+        if (!L) { e.uninsured += d.v; continue; }
+        const lim = conv(L.amt, L.cur) * (/^joint$/i.test(d.owner) ? 2 : 1);
+        const ins = Math.min(d.v, lim || 0); e.insured += ins; e.uninsured += d.v - ins;
+        e.limits.push(`${L.scheme} ${fmtIn(L.amt * (/^joint$/i.test(d.owner) ? 2 : 1), L.cur)}${/^joint$/i.test(d.owner) ? ' (joint)' : ''}`);
+      }
+    }
+    return Object.values(inst).sort((a, b) => b.total - a.total);
+  }
+  function renderCounterparty() {
+    const sec = $('cpSection'), el = $('cpList');
+    if (mode === 'locked') { sec.hidden = true; return; }
+    const list = visible().filter(i => !i.noFx);
+    const rows = counterparty(list), total = rows.reduce((a, r) => a + r.total, 0);
+    if (!rows.length || !total) { sec.hidden = true; return; }
+    sec.hidden = false; el.textContent = '';
+    const max = Math.max(...rows.map(r => r.total));
+    for (const r of rows) {
+      const row = document.createElement('div'); row.className = 'cp-row';
+      const head = document.createElement('div'); head.className = 'cp-head';
+      const nm = document.createElement('span'); nm.className = 'cp-name'; nm.textContent = r.name + (r.guessed ? ' *' : '');
+      const amt = document.createElement('span'); amt.className = 'amt'; amt.textContent = fmt(r.total);
+      const pct = document.createElement('span'); pct.className = 'pct'; pct.textContent = Math.round(r.total / total * 100) + '%';
+      head.append(nm, amt, pct);
+      const bar = document.createElement('div'); bar.className = 'cp-bar'; bar.style.width = Math.max(2, r.total / max * 100) + '%';
+      for (const [cls, v, lab] of [['cp-ins', r.insured, 'Insured'], ['cp-seg', r.segregated, 'Held in custody/trust'], ['cp-un', r.uninsured, 'Uninsured'], ['cp-dir', r.direct, r.name === 'Institution not set' ? 'Institution not set' : 'Held directly']]) {
+        if (v <= 0.5) continue;
+        const seg = document.createElement('i'); seg.className = cls; seg.style.width = (v / r.total * 100) + '%'; seg.title = `${lab}: ${fmt(v)}`; bar.append(seg);
+      }
+      const meta = document.createElement('div'); meta.className = 'cp-meta';
+      const kinds = [...r.kinds].map(k => KIND_LABEL[k]);
+      const bits = [kinds.join(' + ')];
+      if (r.limits.length) bits.push([...new Set(r.limits)].join(', ') + ' cover');
+      if (r.uninsured > 0.5) bits.push(`${fmt(r.uninsured)} uninsured`);
+      if (r.kinds.has('broker') && r.segregated) bits.push('SIPC up to $500k if the broker fails');
+      if (r.name === 'Institution not set') bits.push(`${r.n} holding${r.n === 1 ? '' : 's'}: set Institution in the edit form`);
+      meta.textContent = bits.join(' · ');
+      if (r.uninsured > 0.5) meta.classList.add('warn-text');
+      row.append(head, bar, meta); el.append(row);
+    }
+    const unins = rows.reduce((a, r) => a + (r.kinds.has('crypto') ? 0 : r.uninsured), 0), uninsBanks = rows.filter(r => r.kinds.has('bank') && r.uninsured > 0.5);
+    const top = rows.find(r => r.name !== 'Held directly' && r.name !== 'Institution not set');
+    $('cpUninsured').textContent = fmt(unins);
+    $('cpUninsuredSub').textContent = unins > 0.5 ? `Bank deposits above the insurance limit at ${uninsBanks.map(r => r.name).join(', ')}.` : 'All your bank deposits are within their insurance limits.';
+    $('cpTop').textContent = top ? Math.round(top.total / total * 100) + '%' : '—';
+    $('cpTopSub').textContent = top ? `${top.name} is your largest single institution (${fmt(top.total)}).` : '';
+    const guessed = rows.some(r => r.guessed);
+    $('cpNote').textContent = (guessed ? '* Institution guessed from the holding’s name or account; set it in the edit form to confirm. ' : '') +
+      'Limits are per depositor, per bank, per ownership category (joint accounts count as two depositors). Brokerage, 401(k) and super assets are held for you in custody or trust, so they aren’t a loan to the institution. Check each bank is a member of its scheme. A guide, not legal advice.';
   }
 
   // ---------- Returns panel ----------
@@ -1025,9 +1165,9 @@
     if (locked) {
       ownerView = '';
       ['totAssets', 'totDebts', 'totNet'].forEach(id => { $(id).textContent = '—'; });
-      $('mixSection').hidden = true; $('xpSection').hidden = true; $('retSection').hidden = true; $('efSection').hidden = true; $('projSection').hidden = true; $('projTip').hidden = true; $('fxNote').hidden = true;
+      $('mixSection').hidden = true; $('xpSection').hidden = true; $('cpSection').hidden = true; $('retSection').hidden = true; $('efSection').hidden = true; $('projSection').hidden = true; $('projTip').hidden = true; $('fxNote').hidden = true;
       [...$('projChart').querySelectorAll('svg')].forEach(n => n.remove()); $('projTable').textContent = ''; $('projHeadline').textContent = '';
-      ['assets', 'debts', 'assetMix', 'lookBar', 'lookTable', 'mixHint', 'fName', 'fNote', 'fVal', 'fAcct', 'fFund', 'fOwner', 'fTicker', 'fShares', 'fRate', 'fMonthly', 'fRet12', 'fRet5', 'fRetHint', 'xpCountry', 'xpCurrency', 'xpCountryNote', 'xpSpend', 'xpNote', 'retTable', 'retAll', 'retAllSub', 'retFunds', 'retFundsSub', 'retNote', 'efList', 'efCalc', 'asName', 'asAmt', 'asNote', 'efMonths', 'efUnit', 'efSub', 'efAll', 'efBar', 'efVerdict', 'efFundInfo', 'efPickList', 'eName', 'eAmt', 'eOwner', 'eNote', 'tidyList', 'fxList', 'fxText', 'acctList', 'ownerList', 'fundList']
+      ['assets', 'debts', 'assetMix', 'lookBar', 'lookTable', 'mixHint', 'fName', 'fNote', 'fVal', 'fAcct', 'fFund', 'fOwner', 'fTicker', 'fShares', 'fRate', 'fMonthly', 'fRet12', 'fRet5', 'fRetHint', 'cpList', 'cpUninsured', 'cpUninsuredSub', 'cpTop', 'cpTopSub', 'cpNote', 'fInst', 'instList', 'xpCountry', 'xpCurrency', 'xpCountryNote', 'xpSpend', 'xpNote', 'retTable', 'retAll', 'retAllSub', 'retFunds', 'retFundsSub', 'retNote', 'efList', 'efCalc', 'asName', 'asAmt', 'asNote', 'efMonths', 'efUnit', 'efSub', 'efAll', 'efBar', 'efVerdict', 'efFundInfo', 'efPickList', 'eName', 'eAmt', 'eOwner', 'eNote', 'tidyList', 'fxList', 'fxText', 'acctList', 'ownerList', 'fundList']
         .forEach(id => { const el = $(id); if (el.tagName === 'INPUT') el.value = ''; else el.textContent = ''; });
       return;
     }
@@ -1038,7 +1178,7 @@
     $('totNet').textContent = fmt(a - d);
     $('tidyBtn').hidden = !items.some(i => i.kind === 'asset');
     renderFxNote(vis);
-    renderMix(); renderLookThrough(); renderExposure(); renderReturns(); renderEmergency(); renderProjection(); renderList('asset'); renderList('debt');
+    renderMix(); renderLookThrough(); renderExposure(); renderCounterparty(); renderReturns(); renderEmergency(); renderProjection(); renderList('asset'); renderList('debt');
   }
 
   // Generic busy wrapper for form buttons
@@ -1063,7 +1203,7 @@
     for (let k = 0; k < changes.length; k += 10) {
       const chunk = changes.slice(k, k + 10);
       if (chunk.some(c => !REC_RE.test(c.id))) throw new Error('Invalid record');
-      const j = await at(tablePath(session), { method: 'PATCH', body: { records: chunk.map(c => ({ id: c.id, fields: toFields(c.d) })), typecast: true } });
+      const j = await itemsWrite(() => at(tablePath(session), { method: 'PATCH', body: { records: chunk.map(c => ({ id: c.id, fields: toFields(c.d) })), typecast: true } }));
       for (const r of j.records || []) { const i = items.findIndex(x => x.id === r.id); if (i >= 0) items[i] = fromRecord(r); }
     }
   }
@@ -1185,6 +1325,8 @@
     $('fNote').value = item ? item.note : '';
     $('fAcct').value = item ? item.accountType : '';
     $('fFund').value = item ? item.fund : '';
+    $('fInst').value = item ? item.institution : '';
+    { const g = item ? institutionOf(item) : null; $('fInst').placeholder = g && g.guessed ? `Looks like ${g.name}` : 'e.g. Vanguard, Fidelity, Chase'; }
     $('fOwner').value = item ? item.owner : (ownerView || '');
     $('fTicker').value = item ? item.ticker : '';
     $('fClassWrap').hidden = kind === 'debt';
@@ -1211,6 +1353,7 @@
     fillDatalist('acctList', ACCOUNT_TYPES, items.map(i => i.accountType).filter(Boolean));
     fillDatalist('ownerList', OWNERS, ownersInUse());
     fillDatalist('fundList', [], items.map(i => i.fund).filter(Boolean));
+    fillDatalist('instList', INST.map(x => x.name), items.map(i => i.institution).filter(Boolean));
     $('itemDel').hidden = !item;
     $('itemErr').textContent = '';
     $('itemDlg').showModal();
@@ -1232,7 +1375,7 @@
     if ($('fVal').value === '' || !Number.isFinite(v) || v < 0) { $('itemErr').textContent = 'Please enter a value of 0 or more.'; return; }
     const d = clean({
       name: $('fName').value, kind: editKind, category: $('fCat').value, value: v, note: $('fNote').value,
-      accountType: $('fAcct').value, fund: $('fFund').value, owner: $('fOwner').value,
+      accountType: $('fAcct').value, fund: $('fFund').value, owner: $('fOwner').value, institution: $('fInst').value,
       ticker: $('fTicker').value, shares: $('fShares').value,
       rate: $('fRate').value, monthly: $('fMonthly').value,
       assetClass: editKind === 'asset' ? $('fClass').value : '',
