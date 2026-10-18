@@ -38,6 +38,29 @@
   </div>
 
   <div id="content">
+    <div class="section" id="mixSection" hidden>
+      <div class="section-head"><h2>Your real mix</h2><span class="hint" id="mixHint"></span></div>
+      <div class="card">
+        <div id="lookBar"></div>
+        <div id="lookTable"></div>
+      </div>
+    </div>
+    <div class="section" id="projSection">
+      <div class="section-head"><h2>Projection</h2><span class="hint">Estimates, not guarantees</span></div>
+      <div class="card">
+        <div class="proj-controls">
+          <label>Years<input id="pYears" type="number" min="1" max="50" step="1"></label>
+          <label>Default return %<input id="pReturn" type="number" min="-20" max="30" step="0.1"></label>
+          <label>Inflation %<input id="pInfl" type="number" min="0" max="20" step="0.1"></label>
+          <label class="inline"><input id="pReal" type="checkbox"> Today's dollars</label>
+        </div>
+        <p class="proj-headline" id="projHeadline"></p>
+        <div class="proj-legend"><span><i class="sw sw-nw"></i>Projected net worth</span><span><i class="sw sw-base"></i>Without growth (balances + contributions)</span></div>
+        <div class="proj-chart" id="projChart"><div class="proj-tip" id="projTip" hidden></div></div>
+        <div class="proj-table-wrap"><table class="proj-table" id="projTable"></table></div>
+        <p class="hint" id="projNote"></p>
+      </div>
+    </div>
     <div class="section">
       <div class="section-head"><h2>Assets</h2><button class="btn primary" type="button" data-add="asset">+ Add asset</button></div>
       <div id="assetMix"></div>
@@ -62,6 +85,14 @@
     <div class="field-row">
       <div class="field"><label for="fAcct">Account type</label><input id="fAcct" maxlength="80" list="acctList" placeholder="e.g. 401(k)" autocomplete="off"></div>
       <div class="field"><label for="fOwner">Owner</label><input id="fOwner" maxlength="80" list="ownerList" placeholder="e.g. Myself" autocomplete="off"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label for="fTicker">Ticker (optional)</label><input id="fTicker" maxlength="12" placeholder="e.g. VTTSX" autocomplete="off" spellcheck="false"></div>
+      <div class="field"><label for="fShares">Shares (optional)</label><input id="fShares" type="number" step="any" min="0" inputmode="decimal" placeholder="Auto-updates value"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label for="fRate" id="fRateLabel">Expected return % / yr</label><input id="fRate" type="number" step="0.1" min="-50" max="50" inputmode="decimal" placeholder="Uses default"></div>
+      <div class="field"><label for="fMonthly" id="fMonthlyLabel">Monthly contribution</label><input id="fMonthly" type="number" step="0.01" min="0" inputmode="decimal" placeholder="0"></div>
     </div>
     <div class="field"><label for="fFund">Fund / holding</label><input id="fFund" maxlength="120" list="fundList" placeholder="e.g. Vanguard Target Retirement 2060" autocomplete="off"></div>
     <div class="field"><label for="fNote">Note (optional)</label><input id="fNote" maxlength="300" placeholder="Institution, address…" autocomplete="off"></div>

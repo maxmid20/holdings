@@ -24,6 +24,29 @@ Create a new base, for example "Holdings", with one table named **`Items`** and 
 | `Account type` | Single line text (e.g. 401(k), Roth IRA, Checking) |
 | `Fund`     | Single line text (e.g. Vanguard Target Retirement 2060) |
 | `Owner`    | Single line text (e.g. Myself, Partner, Joint) |
+| `Ticker`   | Single line text (e.g. VTTSX), optional: enables pricing and look-through |
+| `Shares`   | Number (4 decimal places), optional: the daily sync sets `Value` = Shares × price |
+| `Price`, `Priced on` | Number / text, written by the daily sync |
+| `Expected return %` | Number (2 dp, negatives allowed), optional. For a debt, this is its interest rate |
+| `Monthly contribution` | Number (2 dp), optional. For a debt, this is its monthly payment |
+
+## Projection
+
+The **Projection** panel projects every holding forward, month by month:
+
+- **Assets** grow at their `Expected return %` (compounded monthly), plus their `Monthly contribution` at each month's end. Holdings without a return use the panel's **Default return %** if they're Investments, Retirement, Crypto, or Other, and 0% otherwise (cash, property, vehicles…).
+- **Debts** grow at their interest rate and shrink by their monthly payment until they're paid off.
+- **Today's dollars** divides future values by inflation, so you can see real purchasing power.
+- The chart compares projected net worth with **"without growth"** (today's balances plus everything you'll add). The gap between the two lines is investment growth.
+
+Projection settings (years, default return, inflation) are saved only in your browser. The owner filter applies, so you can project just your own holdings or a partner's.
+
+Two more tables power the look-through ("Your real mix") panel:
+
+- **Fund breakdown**: one row per fund per asset class (`Key`, `Fund ticker`, `Asset class`, `Weight %`, `As of`, `Source`). Rows with a `Source` starting with "Manual" are yours and always win. The daily sync writes "Auto" rows.
+- **Exposure history**: one row per day, written by the daily sync, with dollars per asset class plus total assets, debts and net worth.
+
+The daily sync runs as a scheduled GitHub Actions job in a separate **private** repository (`holdings-sync`), so its secrets and logs stay private. The app itself only ever reads these tables.
 
 Copy the **base ID** from the base's URL. It's the part that starts with `app`, as in `airtable.com/appXXXXXXXXXXXXXX/...`.
 

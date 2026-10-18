@@ -44,9 +44,18 @@
       accountType: String((raw && raw.accountType) || '').trim().slice(0, 80),
       fund: String((raw && raw.fund) || '').trim().slice(0, 120),
       owner: String((raw && raw.owner) || '').trim().slice(0, 80),
-      note: String((raw && raw.note) || '').trim().slice(0, 300)
+      note: String((raw && raw.note) || '').trim().slice(0, 300),
+      ticker: TICKER_RE.test(String((raw && raw.ticker) || '').trim().toUpperCase()) ? String(raw.ticker).trim().toUpperCase() : '',
+      shares: posOrNull(raw && raw.shares),
+      price: posOrNull(raw && raw.price),
+      pricedOn: /^\d{4}-\d{2}-\d{2}/.test(String((raw && raw.pricedOn) || '')) ? String(raw.pricedOn).slice(0, 10) : '',
+      rate: rateOrNull(raw && raw.rate),
+      monthly: posOrNull(raw && raw.monthly)
     };
   }
+  const TICKER_RE = /^[A-Z0-9][A-Z0-9.\-]{0,11}$/;
+  function rateOrNull(v) { if (v === '' || v === null || v === undefined) return null; const n = Number(v); return Number.isFinite(n) && n >= -50 && n <= 50 ? n : null; }
+  function posOrNull(v) { if (v === '' || v === null || v === undefined) return null; const n = Number(v); return Number.isFinite(n) && n >= 0 ? n : null; }
 
   // Suggestions offered in the Account type / Owner inputs (you can still type anything).
   const ACCOUNT_TYPES = ['401(k)', 'Roth 401(k)', '403(b)', '457(b)', 'Traditional IRA', 'Roth IRA', 'SEP IRA', 'HSA', '529 plan',
@@ -139,12 +148,15 @@
     ...clean({
       name: r.fields.Name, kind: /^debt$/i.test(String(r.fields.Kind || '')) ? 'debt' : 'asset',
       category: r.fields.Category, value: r.fields.Value, note: r.fields.Note,
-      accountType: r.fields['Account type'], fund: r.fields.Fund, owner: r.fields.Owner
+      accountType: r.fields['Account type'], fund: r.fields.Fund, owner: r.fields.Owner,
+      ticker: r.fields.Ticker, shares: r.fields.Shares, price: r.fields.Price, pricedOn: r.fields['Priced on'],
+      rate: r.fields['Expected return %'], monthly: r.fields['Monthly contribution']
     })
   });
   const toFields = d => ({
     Name: d.name, Kind: d.kind === 'debt' ? 'Debt' : 'Asset', Category: d.category, Value: d.value, Note: d.note,
-    'Account type': d.accountType, Fund: d.fund, Owner: d.owner
+    'Account type': d.accountType, Fund: d.fund, Owner: d.owner, Ticker: d.ticker, Shares: d.shares,
+    'Expected return %': d.rate, 'Monthly contribution': d.monthly
   });
 
   async function atLoadAll() {
@@ -158,6 +170,49 @@
     }
     return out;
   }
+  // ---------- Fund breakdown (written by the daily sync; the app only reads it) ----------
+  const CLASSES = ['US stocks', 'International stocks', 'US bonds', 'International bonds', 'Cash', 'Real estate', 'Crypto', 'Other'];
+  const CLASS_COLORS = ['#2f5d50', '#5b7fa6', '#c8963e', '#a6825b', '#6e9c4f', '#a65b7f', '#8a6fbf', '#7a7a7a'];
+  const CATEGORY_CLASS = { 'Cash': 'Cash', 'Real estate': 'Real estate', 'Crypto': 'Crypto' };
+  let breakdown = {};   // ticker -> { mix: {class: pct}, asOf, source }
+  async function atLoadBreakdown() {
+    const manual = {}, auto = {};
+    let offset = '';
+    for (let page = 0; page < 20; page++) {
+      const q = 'pageSize=100' + (offset ? '&offset=' + encodeURIComponent(offset) : '');
+      const j = await at(`${session.baseId}/${encodeURIComponent('Fund breakdown')}?${q}`);
+      for (const r of j.records || []) {
+        const f = r.fields || {};
+        const t = String(f['Fund ticker'] || '').trim().toUpperCase(), c = f['Asset class'], w = Number(f['Weight %']);
+        if (!TICKER_RE.test(t) || !CLASSES.includes(c) || !Number.isFinite(w) || w <= 0) continue;
+        const bucket = String(f.Source || '').startsWith('Auto') ? auto : manual;
+        const e = bucket[t] || (bucket[t] = { mix: {}, asOf: '', source: String(f.Source || '').slice(0, 80) });
+        e.mix[c] = (e.mix[c] || 0) + w;
+        const d = String(f['As of'] || '').slice(0, 10);
+        if (d > e.asOf) e.asOf = d;
+      }
+      if (!j.offset) break;
+      offset = String(j.offset);
+    }
+    const out = {};
+    for (const [t, e] of Object.entries(auto)) out[t] = e;
+    for (const [t, e] of Object.entries(manual)) {      // manual rows win; shortfall from 100% counts as Other
+      const total = Object.values(e.mix).reduce((a, b) => a + b, 0);
+      if (total < 100) e.mix.Other = (e.mix.Other || 0) + (100 - total);
+      out[t] = e;
+    }
+    for (const e of Object.values(out)) {               // normalise to 100%
+      const total = Object.values(e.mix).reduce((a, b) => a + b, 0);
+      for (const c of Object.keys(e.mix)) e.mix[c] = e.mix[c] * 100 / total;
+    }
+    return out;
+  }
+  async function loadAirtable() {
+    items = await atLoadAll();
+    try { breakdown = await atLoadBreakdown(); }
+    catch (x) { breakdown = {}; }                        // the table is optional; the app works without it
+  }
+
   async function atCreateMany(list) {
     const created = [];
     for (let i = 0; i < list.length; i += 10) {
@@ -194,7 +249,7 @@
   // ---------- Lock / unlock ----------
   function lock(reason) {
     if (mode !== 'airtable') return;
-    session = null; items = []; mode = 'locked';
+    session = null; items = []; breakdown = {}; mode = 'locked';
     document.querySelectorAll('dialog[open]').forEach(d => d.close());
     clearSecrets();
     render();
@@ -245,7 +300,9 @@
   }
 
   function metaLine(i) {
-    const bits = [i.accountType, i.fund, i.owner].filter(Boolean);
+    const sh = i.ticker && i.shares ? `${i.ticker} · ${new Intl.NumberFormat(undefined, { maximumFractionDigits: 4 }).format(i.shares)} sh` : i.ticker;
+    const priced = i.pricedOn ? `priced ${i.pricedOn}` : '';
+    const bits = [i.accountType, i.fund, sh, i.owner, priced].filter(Boolean);
     return bits.length ? `<div class="meta">${bits.map(b => `<span>${esc(b)}</span>`).join('')}</div>` : '';
   }
 
@@ -282,6 +339,152 @@
     el.append(bar, legend);
   }
 
+  function renderLookThrough() {
+    const sec = $('mixSection'), bar = $('lookBar'), tbl = $('lookTable');
+    bar.textContent = ''; tbl.textContent = '';
+    const assets = visible().filter(i => i.kind === 'asset');
+    const covered = assets.filter(i => i.ticker && breakdown[i.ticker]);
+    if (mode === 'locked' || !covered.length) { sec.hidden = true; return; }
+    const exp = Object.fromEntries(CLASSES.map(c => [c, 0]));
+    for (const i of assets) {
+      const mix = i.ticker && breakdown[i.ticker] ? breakdown[i.ticker].mix : { [CATEGORY_CLASS[i.category] || 'Other']: 100 };
+      for (const [c, w] of Object.entries(mix)) exp[c] += (Number(i.value) || 0) * w / 100;
+    }
+    const total = Object.values(exp).reduce((a, b) => a + b, 0);
+    if (!total) { sec.hidden = true; return; }
+    const parts = CLASSES.map((c, ix) => ({ c, v: exp[c], col: CLASS_COLORS[ix] })).filter(p => p.v > 0.005);
+    const b = document.createElement('div'); b.className = 'bar';
+    for (const p of parts) {
+      const seg = document.createElement('div'); seg.style.width = (p.v / total * 100) + '%'; seg.style.background = p.col; seg.title = p.c; b.append(seg);
+      const row = document.createElement('div'); row.className = 'look-row';
+      const dot = document.createElement('i'); dot.style.background = p.col;
+      const name = document.createElement('span'); name.textContent = p.c;
+      const amt = document.createElement('span'); amt.className = 'amt'; amt.textContent = fmt(p.v);
+      const pct = document.createElement('span'); pct.className = 'pct'; pct.textContent = (p.v / total * 100).toFixed(1) + '%';
+      row.append(dot, name, amt, pct); tbl.append(row);
+    }
+    bar.append(b);
+    const dates = covered.map(i => breakdown[i.ticker].asOf).filter(Boolean).sort();
+    $('mixHint').textContent = `Looks through ${covered.length} fund holding${covered.length === 1 ? '' : 's'}` + (dates.length ? ` · compositions as of ${dates[0]}${dates[0] !== dates[dates.length - 1] ? '–' + dates[dates.length - 1] : ''}` : '');
+    sec.hidden = false;
+  }
+
+  // ---------- Projection ----------
+  const GROWTH_CATS = ['Investments', 'Retirement', 'Crypto', 'Other'];
+  const P = prefs.proj = Object.assign({ years: 20, ret: 6, infl: 2.5, real: false }, prefs.proj || {});
+  const clampNum = (v, lo, hi, d) => { const n = Number(v); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : d; };
+
+  // Monthly compounding; contributions/payments at month end. Returns one point per year (0..years).
+  function project(list, years, defaultRet, infl, real) {
+    const state = list.map(i => {
+      const isDebt = i.kind === 'debt';
+      const rate = i.rate !== null && i.rate !== undefined ? i.rate : (isDebt ? 0 : (GROWTH_CATS.includes(i.category) ? defaultRet : 0));
+      return { isDebt, b: Number(i.value) || 0, rm: Math.pow(1 + rate / 100, 1 / 12) - 1, c: Number(i.monthly) || 0 };
+    });
+    const start = state.reduce((a, s) => a + (s.isDebt ? -s.b : s.b), 0);
+    const pts = []; let added = 0;
+    for (let m = 0; m <= years * 12; m++) {
+      if (m > 0) for (const s of state) {
+        if (s.isDebt) { const owed = s.b * (1 + s.rm); const pay = Math.min(s.c, owed); s.b = owed - pay; added += pay; }
+        else { s.b = s.b * (1 + s.rm) + s.c; added += s.c; }
+      }
+      if (m % 12 === 0) {
+        const nw = state.reduce((a, s) => a + (s.isDebt ? -s.b : s.b), 0);
+        const defl = real ? Math.pow(1 + infl / 100, m / 12) : 1;
+        pts.push({ year: m / 12, nw: nw / defl, base: (start + added) / defl,
+          assets: state.reduce((a, s) => a + (s.isDebt ? 0 : s.b), 0) / defl, debts: state.reduce((a, s) => a + (s.isDebt ? s.b : 0), 0) / defl });
+      }
+    }
+    return pts;
+  }
+
+  const fmtShort = n => { const a = Math.abs(n), sgn = n < 0 ? '-' : '';
+    const sym = fmt(0).replace(/[\d.,\s0]/g, '') || '';
+    if (a >= 1e9) return sgn + sym + (a / 1e9).toFixed(1).replace(/\.0$/, '') + 'B';
+    if (a >= 1e6) return sgn + sym + (a / 1e6).toFixed(1).replace(/\.0$/, '') + 'M';
+    if (a >= 1e3) return sgn + sym + Math.round(a / 1e3) + 'K';
+    return sgn + sym + Math.round(a); };
+
+  const SVG = 'http://www.w3.org/2000/svg';
+  const el = (name, attrs, parent) => { const e = document.createElementNS(SVG, name); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); if (parent) parent.append(e); return e; };
+
+  function niceStep(range) { const raw = range / 4, mag = Math.pow(10, Math.floor(Math.log10(raw || 1))); const f = raw / mag; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * mag; }
+
+  function renderProjection() {
+    const sec = $('projSection'), chart = $('projChart'), tip = $('projTip');
+    [...chart.querySelectorAll('svg')].forEach(n => n.remove()); $('projTable').textContent = ''; $('projHeadline').textContent = '';
+    const list = visible();
+    if (mode === 'locked' || !list.length) { sec.hidden = true; return; }
+    sec.hidden = false;
+    $('pYears').value = P.years; $('pReturn').value = P.ret; $('pInfl').value = P.infl; $('pReal').checked = P.real;
+    const pts = project(list, P.years, P.ret, P.infl, P.real);
+    const end = pts[pts.length - 1];
+    const growth = end.nw - end.base;
+    const h = $('projHeadline'); h.textContent = '';
+    const strong = document.createElement('strong'); strong.textContent = fmt(end.nw);
+    h.append(`In ${P.years} year${P.years === 1 ? '' : 's'}: `, strong, ` net worth${P.real ? ' in today\u2019s dollars' : ''}, including ${fmt(growth)} of growth.`);
+
+    // Chart geometry
+    const W = Math.max(300, Math.round(chart.clientWidth || 640)), narrow = W < 520;
+    const H = narrow ? 210 : 250, L = narrow ? 46 : 54, R = narrow ? 50 : 64, T = 12, B = 26, pw = W - L - R, ph = H - T - B;
+    const vals = pts.flatMap(p => [p.nw, p.base]);
+    let lo = Math.min(0, ...vals), hi = Math.max(...vals); if (hi === lo) hi = lo + 1;
+    const step = niceStep(hi - lo); lo = Math.floor(lo / step) * step; hi = Math.ceil(hi / step) * step;
+    const x = yr => L + (P.years ? yr / P.years : 0) * pw, y = v => T + (1 - (v - lo) / (hi - lo)) * ph;
+    const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: 'img', 'aria-label': `Projected net worth over ${P.years} years; see the table below for values.` });
+    for (let v = lo; v <= hi + step / 2; v += step) {
+      el('line', { class: 'grid', x1: L, x2: L + pw, y1: y(v), y2: y(v) }, svg);
+      const t = el('text', { class: 'axis-t', x: L - 8, y: y(v) + 4, 'text-anchor': 'end' }, svg); t.textContent = fmtShort(v);
+    }
+    const xStep = P.years <= (narrow ? 6 : 10) ? 1 : P.years <= 20 ? 5 : 10;
+    for (let yr = 0; yr <= P.years; yr += xStep) { const t = el('text', { class: 'axis-t', x: x(yr), y: H - 6, 'text-anchor': 'middle' }, svg); t.textContent = yr === 0 ? 'Now' : 'Y' + yr; }
+    const path = key => pts.map((p, i) => (i ? 'L' : 'M') + x(p.year).toFixed(1) + ' ' + y(p[key]).toFixed(1)).join(' ');
+    el('path', { class: 'l-base', d: path('base') }, svg);
+    el('path', { class: 'l-nw', d: path('nw') }, svg);
+    // direct labels at line ends (nudged apart if they collide)
+    let yN = y(end.nw), yB = y(end.base); if (Math.abs(yN - yB) < 14) { const mid = (yN + yB) / 2; yN = mid - 7 * Math.sign(yB - yN || 1); yB = mid + 7 * Math.sign(yB - yN || 1); }
+    el('text', { class: 'lbl', x: L + pw + 8, y: yN + 4 }, svg).textContent = fmtShort(end.nw);
+    el('text', { class: 'lbl', x: L + pw + 8, y: yB + 4 }, svg).textContent = fmtShort(end.base);
+    // hover layer
+    const cross = el('line', { class: 'cross', y1: T, y2: T + ph, visibility: 'hidden' }, svg);
+    const dN = el('circle', { class: 'dot-nw', r: 5, visibility: 'hidden' }, svg), dB = el('circle', { class: 'dot-base', r: 5, visibility: 'hidden' }, svg);
+    const hit = el('rect', { x: L, y: T, width: pw, height: ph, fill: 'transparent' }, svg);
+    const show = evt => {
+      const r = svg.getBoundingClientRect(); const px = (evt.clientX - r.left) * W / r.width;
+      const i = Math.max(0, Math.min(pts.length - 1, Math.round((px - L) / pw * P.years))); const p = pts[i];
+      for (const [n, attr] of [[cross, ['x1', 'x2']]]) attr.forEach(a => n.setAttribute(a, x(p.year)));
+      dN.setAttribute('cx', x(p.year)); dN.setAttribute('cy', y(p.nw)); dB.setAttribute('cx', x(p.year)); dB.setAttribute('cy', y(p.base));
+      [cross, dN, dB].forEach(n => n.setAttribute('visibility', 'visible'));
+      tip.textContent = '';
+      const head = document.createElement('div'); head.textContent = p.year === 0 ? 'Now' : `Year ${p.year}`; tip.append(head);
+      for (const [cls, label, v] of [['sw-nw', 'Net worth', p.nw], ['sw-base', 'Without growth', p.base]]) {
+        const row = document.createElement('div'); const sw = document.createElement('i'); sw.className = cls;
+        const b = document.createElement('b'); b.textContent = fmt(v); row.append(sw, label + ' ', b); tip.append(row);
+      }
+      tip.hidden = false;
+      const left = x(p.year) / W * r.width; tip.style.left = Math.min(Math.max(0, left - tip.offsetWidth / 2), r.width - tip.offsetWidth) + 'px';
+    };
+    const hide = () => { [cross, dN, dB].forEach(n => n.setAttribute('visibility', 'hidden')); tip.hidden = true; };
+    hit.addEventListener('pointermove', show); hit.addEventListener('pointerdown', show); hit.addEventListener('pointerleave', hide);
+    chart.prepend(svg);
+
+    // milestone table
+    const marks = [...new Set([1, 5, 10, 15, 20, 25, 30, 40, 50].filter(yv => yv <= P.years).concat([P.years]))].sort((a, b) => a - b);
+    const tbl = $('projTable');
+    const hr = document.createElement('tr'); ['Year', 'Assets', 'Debts', 'Net worth', 'Growth'].forEach(t => { const th = document.createElement('th'); th.textContent = t; hr.append(th); });
+    const thead = document.createElement('thead'); thead.append(hr); tbl.append(thead);
+    const tb = document.createElement('tbody');
+    for (const yv of marks) { const p = pts[yv]; const tr = document.createElement('tr');
+      [String(yv), fmt(p.assets), fmt(p.debts), fmt(p.nw), fmt(p.nw - p.base)].forEach(t => { const td = document.createElement('td'); td.textContent = t; tr.append(td); }); tb.append(tr); }
+    tbl.append(tb);
+    const unset = list.filter(i => i.kind === 'asset' && (i.rate === null || i.rate === undefined)).length;
+    $('projNote').textContent = `Assets without their own expected return use ${P.ret}% if they're investments, retirement, crypto or other, and 0% otherwise (${unset} holding${unset === 1 ? '' : 's'} using a default). Debts grow at their interest rate and shrink by their monthly payment. Returns are compounded monthly and contributions added monthly${P.real ? `; values are shown in today's dollars at ${P.infl}% inflation` : ''}.`;
+  }
+  const onProj = () => { P.years = Math.round(clampNum($('pYears').value, 1, 50, 20)); P.ret = clampNum($('pReturn').value, -20, 30, 6); P.infl = clampNum($('pInfl').value, 0, 20, 2.5); P.real = $('pReal').checked; savePrefs(); renderProjection(); };
+  ['pYears', 'pReturn', 'pInfl'].forEach(id => $(id).addEventListener('change', onProj));
+  let resizeT = 0, lastW = 0;
+  window.addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(() => { const w = $('projChart').clientWidth; if (w && w !== lastW && mode !== 'locked') { lastW = w; renderProjection(); } }, 150); }); $('pReal').addEventListener('change', onProj);
+
   function render() {
     const locked = mode === 'locked';
     $('lockCard').hidden = !locked;
@@ -297,7 +500,9 @@
     if (locked) {
       ownerView = '';
       ['totAssets', 'totDebts', 'totNet'].forEach(id => { $(id).textContent = '—'; });
-      ['assets', 'debts', 'assetMix', 'fName', 'fNote', 'fVal', 'fAcct', 'fFund', 'fOwner', 'acctList', 'ownerList', 'fundList']
+      $('mixSection').hidden = true; $('projSection').hidden = true; $('projTip').hidden = true;
+      [...$('projChart').querySelectorAll('svg')].forEach(n => n.remove()); $('projTable').textContent = ''; $('projHeadline').textContent = '';
+      ['assets', 'debts', 'assetMix', 'lookBar', 'lookTable', 'mixHint', 'fName', 'fNote', 'fVal', 'fAcct', 'fFund', 'fOwner', 'fTicker', 'fShares', 'fRate', 'fMonthly', 'acctList', 'ownerList', 'fundList']
         .forEach(id => { const el = $(id); if (el.tagName === 'INPUT') el.value = ''; else el.textContent = ''; });
       return;
     }
@@ -306,7 +511,7 @@
     $('totAssets').textContent = fmt(a);
     $('totDebts').textContent = fmt(d);
     $('totNet').textContent = fmt(a - d);
-    renderMix(); renderList('asset'); renderList('debt');
+    renderMix(); renderLookThrough(); renderProjection(); renderList('asset'); renderList('debt');
   }
 
   // Generic busy wrapper for form buttons
@@ -329,6 +534,13 @@
     $('fAcct').value = item ? item.accountType : '';
     $('fFund').value = item ? item.fund : '';
     $('fOwner').value = item ? item.owner : (ownerView || '');
+    $('fTicker').value = item ? item.ticker : '';
+    $('fShares').value = item && item.shares !== null ? item.shares : '';
+    $('fRate').value = item && item.rate !== null ? item.rate : '';
+    $('fMonthly').value = item && item.monthly !== null ? item.monthly : '';
+    $('fRateLabel').textContent = kind === 'debt' ? 'Interest rate % / yr' : 'Expected return % / yr';
+    $('fMonthlyLabel').textContent = kind === 'debt' ? 'Monthly payment' : 'Monthly contribution';
+    $('fRate').placeholder = kind === 'debt' ? '0' : 'Uses default';
     fillDatalist('acctList', ACCOUNT_TYPES, items.map(i => i.accountType).filter(Boolean));
     fillDatalist('ownerList', OWNERS, ownersInUse());
     fillDatalist('fundList', [], items.map(i => i.fund).filter(Boolean));
@@ -343,8 +555,12 @@
     if ($('fVal').value === '' || !Number.isFinite(v) || v < 0) { $('itemErr').textContent = 'Please enter a value of 0 or more.'; return; }
     const d = clean({
       name: $('fName').value, kind: editKind, category: $('fCat').value, value: v, note: $('fNote').value,
-      accountType: $('fAcct').value, fund: $('fFund').value, owner: $('fOwner').value
+      accountType: $('fAcct').value, fund: $('fFund').value, owner: $('fOwner').value,
+      ticker: $('fTicker').value, shares: $('fShares').value,
+      rate: $('fRate').value, monthly: $('fMonthly').value
     });
+    if ($('fRate').value !== '' && d.rate === null) { $('itemErr').textContent = 'Enter a rate between -50% and 50%.'; return; }
+    if ($('fTicker').value.trim() && !d.ticker) { $('itemErr').textContent = 'Tickers are letters/numbers only, e.g. VTTSX.'; return; }
     try {
       await busy($('itemSave'), () => editingId ? updateItem(editingId, d) : addItem(d));
       $('itemDlg').close(); render();
@@ -401,7 +617,7 @@
           const box = await seal(session, pass);
           if (!store.set(VAULT_KEY, JSON.stringify(box))) throw new Error('This browser blocked local storage, so the connection can’t be saved.');
           if (upload.length) { await atCreateMany(upload); store.del(LOCAL_KEY); }
-          items = await atLoadAll();
+          await loadAirtable();
         } catch (x) { session = null; mode = prevMode; throw x; }
       });
       $('connectDlg').close(); clearSecrets(); lastActivity = Date.now(); render();
@@ -422,7 +638,7 @@
         if (!creds || !BASE_RE.test(creds.baseId) || !TOKEN_RE.test(creds.token)) throw new Error('Saved connection is damaged. Disconnect and reconnect.');
         session = { token: creds.token, baseId: creds.baseId, table: String(creds.table || 'Items') };
         mode = 'airtable';
-        try { items = await atLoadAll(); } catch (x) { session = null; mode = 'locked'; throw x; }
+        try { await loadAirtable(); } catch (x) { session = null; mode = 'locked'; throw x; }
       });
       failedUnlocks = 0; $('unlockDlg').close(); clearSecrets(); lastActivity = Date.now(); $('banner').hidden = true; render();
     } catch (x) { $('unlockErr').textContent = x.message; }
@@ -430,7 +646,7 @@
 
   function disconnect() {
     if (!confirm('Disconnect Airtable on this device? Your data stays in Airtable, and the encrypted token is erased from this browser. You can reconnect anytime with a token.')) return;
-    store.del(VAULT_KEY); session = null; mode = 'local'; items = loadLocalItems();
+    store.del(VAULT_KEY); session = null; breakdown = {}; mode = 'local'; items = loadLocalItems();
     document.querySelectorAll('dialog[open]').forEach(d => d.close()); clearSecrets(); render();
     showBanner('Disconnected. For extra safety, you can also revoke the token at airtable.com/create/tokens.', 'info');
   }
