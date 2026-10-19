@@ -2447,13 +2447,23 @@
       const t = tot(o), row = document.createElement('div'); row.className = 'sc-arow';
       const l = document.createElement('span'); l.textContent = lab;
       const bar = document.createElement('span'); bar.className = 'sc-abar';
-      BUCKETS.forEach((b, ix) => { const w = t ? o[b] / t : 0; if (w < 0.002) return; const seg = document.createElement('i'); seg.className = 'bk-' + ix; seg.style.width = (w * 100) + '%'; seg.title = `${b} ${(w * 100).toFixed(1)}% · ${fmt(o[b])}`; bar.append(seg); });
+      bar.classList.add('lab');
+      BUCKETS.forEach((b, ix) => {
+        const w = t ? o[b] / t : 0; if (w < 0.002) return; const seg = document.createElement('i'); seg.className = 'bk-' + ix; seg.style.width = (w * 100) + '%'; seg.title = `${b} ${(w * 100).toFixed(1)}% · ${fmt(o[b])}`;
+        const pc = document.createElement('b'); pc.textContent = (w * 100 >= 9.95 ? Math.round(w * 100) : (w * 100).toFixed(1)) + '%'; seg.append(pc); bar.append(seg);
+      });
       const a = document.createElement('span'); a.className = 'amt'; a.textContent = fmtShort(t);
       row.append(l, bar, a); bars.append(row);
     }
+    // percentages sit inside each segment; hidden where the segment is too narrow (the legend lists every value)
+    requestAnimationFrame(() => bars.querySelectorAll('.sc-abar.lab i').forEach(seg => { const b = seg.firstChild; b.hidden = b.scrollWidth + 6 > seg.clientWidth; }));
     const lg = $('mvLegend'); lg.textContent = '';
-    BUCKETS.forEach((b, ix) => { if (R.before[b] < 0.5 && R.after[b] < 0.5) return; const s = document.createElement('span'); const d = document.createElement('i'); d.className = 'bk-' + ix; s.append(d, b); lg.append(s); });
-    const tb0 = tot(R.before), ta = tot(R.after);
+    const tb0 = tot(R.before), ta = tot(R.after), pct = v => (v * 100).toFixed(1) + '%';
+    BUCKETS.forEach((b, ix) => {
+      if (R.before[b] < 0.5 && R.after[b] < 0.5) return; const s = document.createElement('span'); const d = document.createElement('i'); d.className = 'bk-' + ix;
+      const w0 = tb0 ? R.before[b] / tb0 : 0, w1 = ta ? R.after[b] / ta : 0, v = document.createElement('b'); v.className = 'lg-pct';
+      v.textContent = Math.abs(w0 - w1) >= 0.0005 ? `${pct(w0)} → ${pct(w1)}` : pct(w0); s.append(d, b + ' ', v); lg.append(s);
+    });
     const ch = BUCKETS.filter(b => Math.abs(R.before[b] / tb0 - R.after[b] / ta) >= 0.0005).map(b => `${b} ${(R.before[b] / tb0 * 100).toFixed(1)}% → ${(R.after[b] / ta * 100).toFixed(1)}%`);
     $('mvChanges').textContent = ch.length ? ch.join(' · ') : 'No change in your asset-class mix (the moves stay within the same buckets).';
     const dNow = visible().filter(i => i.kind === 'debt' && i.value > 0 && !i.noFx).reduce((a, i) => a + i.value, 0);

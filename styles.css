@@ -257,6 +257,13 @@ dialog.wide{width:min(760px,calc(100vw - 32px))}
 .sc-arow{display:grid;grid-template-columns:44px 1fr auto;gap:10px;align-items:center;font-size:13px}
 .sc-abar{display:flex;gap:2px;height:14px}
 .sc-abar i{display:block;height:100%;border-radius:2px;min-width:2px}
+.sc-abar.lab{height:24px}
+.sc-abar.lab i{display:flex;align-items:center;justify-content:center;overflow:hidden}
+.sc-abar.lab b{font-style:normal;font-size:11px;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap;line-height:1}
+.sc-abar.lab b{color:#111}.sc-abar.lab i.bk-5 b,.sc-abar.lab i.bk-6 b,.sc-abar.lab i.bk-0 b{color:#fff}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .sc-abar.lab i.bk-6 b,:root:not([data-theme="light"]) .sc-abar.lab i.bk-0 b{color:#111}}
+:root[data-theme="dark"] .sc-abar.lab i.bk-6 b,:root[data-theme="dark"] .sc-abar.lab i.bk-0 b{color:#111}
+.cp-legend .lg-pct{font-weight:600;color:var(--text);font-variant-numeric:tabular-nums}
 
 /* rebalance what-if */
 .mv-list{display:grid;gap:8px}
