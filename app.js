@@ -3502,12 +3502,12 @@
         cash += sav + bonus - fromPay - X + ev + interest;
         inv = inv * Math.pow(1 + invRet / 100, 1 / 12) + fromPay + payroll + X;
         const setA = Object.values(aside).reduce((a, b) => a + b, 0), target = months * ess * grow + setA;
-        rows.push({ t, ym, sav, bonus, invest: fromPay + X, payroll, ev, evNames, interest, cash, target, inv, over: has(SF.over[ym]), cover: (ess * grow) ? Math.max(0, cash - setA) / (ess * grow) : null });
+        rows.push({ t, ym, sav, bonus, invest: fromPay + X, payroll, ev, evNames, interest, cash: cash - setA, cashAll: cash, setA, target: target - setA, inv, over: has(SF.over[ym]), cover: (ess * grow) ? Math.max(0, cash - setA) / (ess * grow) : null });
       }
       return rows;
     };
     const plan = run(0, 0);
-    const target0 = months * ess + asides0.reduce((a, b) => a + b.v, 0), slack0 = cash0 - target0;
+    const asidesT = asides0.reduce((a, b) => a + b.v, 0), free0 = cash0 - asidesT, target0 = months * ess, slack0 = free0 - target0;   // emergency fund only: set-asides are kept out of both sides
     let X = Infinity; for (const r of plan) X = Math.min(X, (r.cash - r.target) / r.t);
     const slackMin = Math.min(slack0, ...plan.map(r => r.cash - r.target));
     let rec = null;
@@ -3529,7 +3529,7 @@
     const bonusT = plan.reduce((a, r) => a + r.bonus, 0), savT = plan.reduce((a, r) => a + r.sav, 0);
     const any = (Number(SF.savings) || 0) > 0 || bonusT > 0 || plan.some(r => r.over && r.sav > 0);
     const noFx = expView().filter(e => e.noFx).length;
-    return { plan, rec, cash0, target0, slack0, ess, noFx, months, fromPay, payroll, inv0, invRet, cashRate, sp, reach, bonusT, savT, any, asidesT: asides0.reduce((a, b) => a + b.v, 0) };
+    return { plan, rec, cash0: free0, cashAll0: cash0, target0, slack0, ess, noFx, months, fromPay, payroll, inv0, invRet, cashRate, sp, reach, bonusT, savT, any, asidesT };
   }
   function sfChart(chart, tip, rows, lines, labels) {
     [...chart.querySelectorAll('svg')].forEach(n => n.remove()); tip.hidden = true;
@@ -3613,12 +3613,12 @@
     if (mode === 'locked') return;
     const Mo = sfModel();
     $('sfSavings').value = SF.savings ?? ''; $('sfSavings').placeholder = 'e.g. 3000'; $('sfRaise').value = SF.raise; $('sfMonths').value = Mo.months; $('sfRetTake').checked = !!SF.retTake;
-    const covNow = Mo.ess ? Math.max(0, Mo.cash0 - Mo.asidesT) / Mo.ess : null;
+    const covNow = Mo.ess ? Math.max(0, Mo.cash0) / Mo.ess : null;
     $('sfNow').textContent = covNow === null ? fmt(Mo.cash0) : `${fmtMonths(covNow)} mo`;
     const spLabel = SF.basis === 'ess' && Mo.sp.ess ? 'essential spending' : 'living expenses';
     $('sfNowSub').textContent = !Mo.ess ? 'Add monthly living expenses on the overview to set a target.'
-      : (Mo.asidesT > 0.5 ? `${fmt(Math.max(0, Mo.cash0 - Mo.asidesT))} free cash (${fmt(Mo.cash0)} minus ${fmt(Mo.asidesT)} set aside)` : `${fmt(Mo.cash0)} cash`) + ` ÷ ${fmt(Mo.ess)}/mo ${spLabel}. ` +
-        `Target: ${Mo.months} × ${fmt(Mo.ess)} = ${fmt(Mo.months * Mo.ess)}` + (Mo.asidesT > 0.5 ? `, plus ${fmt(Mo.asidesT)} set aside = ${fmt(Mo.target0)} cash.` : '.') +
+      : `${fmt(Mo.cash0)} emergency fund` + (Mo.asidesT > 0.5 ? ` (${fmt(Mo.cashAll0)} cash minus ${fmt(Mo.asidesT)} set aside for goals)` : '') + ` ÷ ${fmt(Mo.ess)}/mo ${spLabel}. ` +
+        `Target: ${Mo.months} months × ${fmt(Mo.ess)} = ${fmt(Mo.target0)}.` +
         (Mo.noFx ? ` ${Mo.noFx} expense${Mo.noFx === 1 ? ' isn’t' : 's aren’t'} counted (no exchange rate).` : '');
     const bs = $('sfBasis'); bs.textContent = '';
     for (const [k, t, v] of [['all', 'All living expenses', Mo.sp.all], ['ess', 'Essentials only', Mo.sp.ess]]) { const o = document.createElement('option'); o.value = k; o.textContent = `${t} (${fmt(v)}/mo)`; bs.append(o); }
@@ -3634,7 +3634,7 @@
     const rows = SF.mode === 'rec' && Mo.rec ? Mo.rec.rows : Mo.plan;
     const low = rows.reduce((a, r) => r.cash - r.target < a.cash - a.target ? r : a, rows[0]);
     $('sfLow').textContent = none ? '—' : `${low.cover === null ? fmtShort(low.cash) : fmtMonths(low.cover) + ' mo'}`;
-    $('sfLowSub').textContent = none ? 'Enter your regular savings to forecast.' : `${ymLabel(low.ym)}: ${fmt(low.cash)} cash vs ${fmt(low.target)} target${low.evNames.length ? ` (${low.evNames.join(', ')})` : ''}.`;
+    $('sfLowSub').textContent = none ? 'Enter your regular savings to forecast.' : `${ymLabel(low.ym)}: ${fmt(low.cash)} emergency fund vs ${fmt(low.target)} target${low.evNames.length ? ` (${low.evNames.join(', ')})` : ''}.`;
     $('sfLow').classList.toggle('neg', !none && low.cash < low.target);
     if (none) { $('sfRec').textContent = '—'; $('sfRecSub').textContent = ''; }
     else if (Mo.rec) { $('sfRec').textContent = `${fmt(Mo.rec.X)}/mo`; $('sfRecSub').textContent = `${Mo.rec.L > 0 ? `plus ${fmt(Mo.rec.L)} now, ` : ''}on top of the ${fmt(Mo.fromPay)}/month you already invest, while never dropping below the target.` + (Mo.rec.after ? ` From ${ymLabel(Mo.rec.after.ym)} you could raise it to ${fmt(Mo.rec.X + Mo.rec.after.extra)}/month.` : ''); }
@@ -3653,8 +3653,8 @@
     if (rebuild || !$('sfGrid').querySelector('.sf-cell')) renderSfGrid();
     // cash and investment charts
     const labels = ['Now', ...rows.map(r => ymLabel(r.ym))];
-    const lines1 = [{ label: SF.mode === 'rec' ? 'Cash (with investing)' : 'Cash', cls: 'l-cash', sw: 'sw-cash', pts: [SF.mode === 'rec' && Mo.rec ? Mo.cash0 - Mo.rec.L : Mo.cash0, ...rows.map(r => r.cash)] }, { label: 'Target', cls: 'l-tgt', sw: 'sw-tgt', pts: [Mo.target0, ...rows.map(r => r.target)] }];
-    if (SF.mode === 'rec' && Mo.rec) lines1.push({ label: 'Cash (current plan)', cls: 'l-cash2', sw: 'sw-dot', pts: [Mo.cash0, ...Mo.plan.map(r => r.cash)] });
+    const lines1 = [{ label: SF.mode === 'rec' ? 'Emergency fund (with investing)' : 'Emergency fund', cls: 'l-cash', sw: 'sw-cash', pts: [SF.mode === 'rec' && Mo.rec ? Mo.cash0 - Mo.rec.L : Mo.cash0, ...rows.map(r => r.cash)] }, { label: 'Target', cls: 'l-tgt', sw: 'sw-tgt', pts: [Mo.target0, ...rows.map(r => r.target)] }];
+    if (SF.mode === 'rec' && Mo.rec) lines1.push({ label: 'Emergency fund (current plan)', cls: 'l-cash2', sw: 'sw-dot', pts: [Mo.cash0, ...Mo.plan.map(r => r.cash)] });
     const lg1 = $('sfLegend1'); lg1.textContent = ''; for (const l of lines1) { const s = document.createElement('span'); const i = document.createElement('i'); i.className = 'sw ' + l.sw; s.append(i, l.label); lg1.append(s); }
     const lines2 = [{ label: SF.mode === 'rec' ? 'Investments (with investing)' : 'Investments', cls: 'l-inv', sw: 'sw-inv', pts: [SF.mode === 'rec' && Mo.rec ? Mo.inv0 + Mo.rec.L : Mo.inv0, ...rows.map(r => r.inv)] }];
     if (SF.mode === 'rec' && Mo.rec) lines2.push({ label: 'Investments (current plan)', cls: 'l-inv2', sw: 'sw-dot', pts: [Mo.inv0, ...Mo.plan.map(r => r.inv)] });
@@ -3664,17 +3664,17 @@
     if (rebuild || !$('sfEvents').querySelector('.sf-ev')) renderSfEvents();
     // table
     const tbl = $('sfTable'); tbl.textContent = '';
-    const hr = document.createElement('tr'); ['Month', 'Savings', 'Bonus', 'To investments', 'One-offs', 'Interest', 'Cash', 'Target', 'Cover'].forEach(t => { const th = document.createElement('th'); th.textContent = t; hr.append(th); });
+    const hr = document.createElement('tr'); ['Month', 'Savings', 'Bonus', 'To investments', 'One-offs', 'Interest', 'Emergency fund', 'Target', 'Cover', 'Set aside'].forEach(t => { const th = document.createElement('th'); th.textContent = t; hr.append(th); });
     const th = document.createElement('thead'); th.append(hr); tbl.append(th);
     const tb = document.createElement('tbody');
     if (!none) for (const r of rows) {
       const tr = document.createElement('tr'); if (r.ev || r.bonus) tr.className = 'sf-ev-row';
-      const cells = [ymLabel(r.ym), (r.sav < 0 ? '−' : '+') + fmtShort(Math.abs(r.sav)) + (r.over ? '*' : ''), r.bonus ? '+' + fmtShort(r.bonus) : '—', r.invest > 0.5 ? '−' + fmtShort(r.invest) : '—', r.ev ? (r.ev > 0 ? '+' : '−') + fmtShort(Math.abs(r.ev)) : '—', '+' + fmtShort(r.interest), fmtShort(r.cash), fmtShort(r.target), r.cover === null ? '—' : fmtMonths(r.cover) + ' mo'];
+      const cells = [ymLabel(r.ym), (r.sav < 0 ? '−' : '+') + fmtShort(Math.abs(r.sav)) + (r.over ? '*' : ''), r.bonus ? '+' + fmtShort(r.bonus) : '—', r.invest > 0.5 ? '−' + fmtShort(r.invest) : '—', r.ev ? (r.ev > 0 ? '+' : '−') + fmtShort(Math.abs(r.ev)) : '—', '+' + fmtShort(r.interest), fmtShort(r.cash), fmtShort(r.target), r.cover === null ? '—' : fmtMonths(r.cover) + ' mo', r.setA > 0.5 ? fmtShort(r.setA) : '—'];
       cells.forEach((t, k) => { const td = document.createElement('td'); td.textContent = t; if (k === 4 && r.evNames.length) td.title = r.evNames.join(', '); if (k === 6 && r.cash < 0) td.className = 'neg'; else if ((k === 6 || k === 8) && r.cash < r.target) td.className = 'low'; tr.append(td); });
       tb.append(tr);
     }
     tbl.append(tb);
-    $('sfNote').textContent = `Regular savings is what’s left each month after spending and bills (* = a month you edited). The target is ${Mo.months} months of ${spLabel} (${fmt(Mo.ess)}/month from your Monthly living expenses list), growing with ${P.infl}% inflation${Mo.asidesT > 0.5 ? ', plus set-asides (released when a one-off is paid from one)' : ''}. Cash starts from your emergency-fund holdings and earns ${Mo.cashRate.toFixed(1)}%/yr. ` +
+    $('sfNote').textContent = `Regular savings is what’s left each month after spending and bills (* = a month you edited). The target is ${Mo.months} months of ${spLabel} (${fmt(Mo.ess)}/month from your Monthly living expenses list), growing with ${P.infl}% inflation. The emergency fund is your emergency-fund holdings${Mo.asidesT > 0.5 ? ` minus cash set aside for goals (${fmt(Mo.asidesT)} now; a set-aside is released when a one-off is paid from it)` : ''}; cash earns ${Mo.cashRate.toFixed(1)}%/yr. ` +
       `Automatic investments (${fmt(Mo.fromPay)}/month, from each holding’s monthly contribution) come out of your savings${Mo.payroll > 0.5 ? `; ${fmt(Mo.payroll)}/month into retirement accounts is treated as a payroll deduction${SF.retTake ? '' : ' and isn’t taken from savings'}` : ''}. ` +
       `Investments start at ${fmt(Mo.inv0)} and grow at ${Mo.invRet.toFixed(1)}%/yr. Everything here is saved in this browser.`;
   }
