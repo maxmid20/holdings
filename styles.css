@@ -381,7 +381,7 @@ dialog.wide{width:min(760px,calc(100vw - 32px))}
 #envBalBars .sc-arow{grid-template-columns:72px 1fr auto}
 
 /* savings forecast */
-#sfIncome{width:130px}
+#sfSavings{width:130px}
 .sf-ev{display:grid;grid-template-columns:minmax(0,1.5fr) 140px 90px 120px minmax(0,1.2fr) auto;gap:8px;align-items:center;margin-top:8px}
 .sf-ev input,.sf-ev select{width:100%;min-width:0;background:var(--surface);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:7px 8px;font:inherit}
 .sf-ev input[type=number]{text-align:right;font-variant-numeric:tabular-nums}
@@ -398,3 +398,19 @@ dialog.wide{width:min(760px,calc(100vw - 32px))}
 .sw-dot{background:repeating-linear-gradient(90deg,var(--muted) 0 2px,transparent 2px 5px)}
 @media (max-width:640px){.sf-ev{grid-template-columns:1fr 1fr auto}.sf-ev .sf-name{grid-column:1/3}.sf-ev .sf-x{grid-column:3;grid-row:1}.sf-ev .sf-fund{grid-column:1/-1}}
 .tabs{overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}.tabs::-webkit-scrollbar{display:none}.tab{flex:0 0 auto;white-space:nowrap}
+.proj-chart .b-sav{fill:var(--s1)}.proj-chart .b-sav.ov{fill:var(--s1);stroke:var(--text);stroke-width:1.5}
+.proj-chart .b-bon{fill:var(--s2)}.proj-chart .b-in{fill:var(--bk2)}.proj-chart .b-out{fill:var(--bk7)}
+.proj-chart .b-hl{fill:var(--text);opacity:.06}
+.sw-sav{background:var(--s1)}.sw-bon{background:var(--s2)}.sw-in{background:var(--bk2)}.sw-out{background:var(--bk7)}
+.proj-legend .sw-sav,.proj-legend .sw-bon,.proj-legend .sw-in,.proj-legend .sw-out{height:10px;width:10px;border-radius:2px;vertical-align:-1px}
+.sf-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:8px;margin-top:12px}
+.sf-cell{border:1px solid var(--line);border-radius:10px;padding:8px;display:grid;gap:4px;background:var(--surface)}
+.sf-cell.ov{border-color:var(--s1);box-shadow:inset 3px 0 0 var(--s1)}
+.sf-cell.has-bon{box-shadow:inset 0 -3px 0 var(--s2)}
+.sf-cell.ov.has-bon{box-shadow:inset 3px 0 0 var(--s1),inset 0 -3px 0 var(--s2)}
+.sf-cell-h{font-size:13px;font-weight:600}
+.sf-cell label{display:grid;gap:2px;font-size:11px;color:var(--muted)}
+.sf-cell input::-webkit-inner-spin-button,.sf-cell input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}.sf-cell input{-moz-appearance:textfield;appearance:textfield}
+.sf-cell input{width:100%;min-width:0;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px 6px;text-align:right;font:inherit;font-size:13px;font-variant-numeric:tabular-nums}
+.sf-cell input:focus{outline:2px solid var(--s1);outline-offset:0}
+@media (max-width:640px){.sf-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}

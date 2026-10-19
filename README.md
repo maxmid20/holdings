@@ -163,8 +163,9 @@ Airtable's free plan allows 1,000 records per base, and the sync adds one Exposu
 
 A 24-month, month-by-month cash-flow forecast answering: *is my emergency fund big enough all the way through, and how much can I invest on top?*
 
-- **Inputs:** monthly take-home pay (and an annual raise), your expenses list (growing with inflation), and debt payments. Tick the box if your expenses already include debt payments such as rent or a mortgage.
-- **Investment contributions:** taxable contributions come out of take-home pay. Retirement-account contributions are treated as payroll deductions unless you say otherwise.
+- **Inputs:** your regular savings per month (what's left after spending and bills) with an optional yearly growth rate. Your expenses list only sets the emergency-fund target (growing with inflation); it isn't taken off savings again.
+- **Savings & bonuses by month:** a bar chart of the next 24 months (savings, bonuses, one-offs in and out) and a grid with one card per month. Type a Savings figure to override that month (leave it blank to use the regular amount) and a Bonus for any month that has one. Edited months are outlined, and "Reset edited months" clears the overrides. Click a bar to jump to its month.
+- **Investment contributions:** taxable contributions come out of your savings. Retirement-account contributions are treated as payroll deductions unless you tick the box.
 - **Interest on cash:** at your cash holdings' rates.
 - **Planned one-offs:** in or out, by month. A spend can be paid from a set-aside, which releases that set-aside from the target.
 - **Target:** N months of essential spending (default: the Plan tab's cash reserve), growing with inflation, plus set-asides.

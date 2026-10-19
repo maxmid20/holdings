@@ -6,8 +6,8 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://api.airtable.com; form-action 'none'; base-uri 'none'; object-src 'none'">
 <meta name="referrer" content="no-referrer">
 <title>Holdings</title>
-<link rel="stylesheet" href="styles.css?v=2026-10-19f">
-<script src="app.js?v=2026-10-19f" defer></script>
+<link rel="stylesheet" href="styles.css?v=2026-10-19g">
+<script src="app.js?v=2026-10-19g" defer></script>
 </head>
 <body>
 <div class="wrap">
@@ -247,11 +247,10 @@
       <div class="section-head"><h2>Projected savings &amp; investments</h2><span class="hint">Next 24 months, month by month · keep the emergency fund topped up, invest the rest</span></div>
       <div class="card">
         <div class="proj-controls">
-          <label>Take-home pay / month<input id="sfIncome" type="number" min="0" step="any"></label>
-          <label>Pay rise %/yr<input id="sfRaise" type="number" min="-20" max="50" step="0.5"></label>
+          <label>Regular savings / month<input id="sfSavings" type="number" step="any"></label>
+          <label>Savings growth %/yr<input id="sfRaise" type="number" min="-20" max="50" step="0.5"></label>
           <label>Emergency fund (months)<input id="sfMonths" type="number" min="0" max="36" step="1"></label>
-          <label class="inline"><input id="sfDebtIn" type="checkbox"> Debt payments are already in my expenses</label>
-          <label class="inline"><input id="sfRetTake" type="checkbox"> Retirement contributions come out of take-home pay</label>
+          <label class="inline"><input id="sfRetTake" type="checkbox"> Retirement contributions come out of my savings</label>
         </div>
         <p class="rk-verdict" id="sfVerdict"></p>
         <div class="sc-tabs env-opts" id="sfMode" role="group" aria-label="Plan to show"></div>
@@ -260,6 +259,12 @@
           <div><div class="label">Lowest point</div><div class="ret-big" id="sfLow"></div><div class="hint" id="sfLowSub"></div></div>
           <div><div class="label">You could invest</div><div class="ret-big" id="sfRec"></div><div class="hint" id="sfRecSub"></div></div>
         </div>
+        <h3 class="mv-h">Savings &amp; bonuses by month</h3>
+        <p class="hint" id="sfFlowSub"></p>
+        <div class="proj-legend"><span><i class="sw sw-sav"></i>Regular savings</span><span><i class="sw sw-bon"></i>Bonus</span><span><i class="sw sw-in"></i>One-off in</span><span><i class="sw sw-out"></i>One-off out</span></div>
+        <div class="proj-chart" id="sfFlowChart"><div class="proj-tip" id="sfFlowTip" hidden></div></div>
+        <div class="sf-grid" id="sfGrid"></div>
+        <div class="mv-actions"><button class="btn" type="button" id="sfReset" hidden>Reset edited months to the regular amount</button></div>
         <h3 class="mv-h">Cash vs emergency-fund target</h3>
         <div class="proj-legend" id="sfLegend1"></div>
         <div class="proj-chart" id="sfChart1"><div class="proj-tip" id="sfTip1" hidden></div></div>
