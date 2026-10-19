@@ -197,6 +197,29 @@ These are flags inferred from currency, category and names, not advice.
 
 Policy, FI settings, goals and tax settings are saved in this browser.
 
+## Macro tab
+
+A macro investor's view, in the spirit of Bridgewater:
+
+- **Macro regime:** whether growth and inflation are rising or falling, scored from FRED indicators (St. Louis Fed).
+  - Growth signals: the unemployment trend (a Sahm-style rule), payroll growth, industrial production and credit spreads.
+  - Inflation signals: CPI momentum, the core inflation trend and 10-year breakevens (the inflation rate bond markets expect).
+  - Each scores −1 to +1 against its own recent trend. A 2×2 map shows the current quadrant (goldilocks, inflationary boom, stagflation, deflationary bust) with a six-month trail.
+  - It also shows a markets-and-policy table (rates, real yields, curve, spreads, dollar, Australian and UK yields) and what the quadrant would mean for your portfolio.
+- **Four-environment balance:** the All Weather lens.
+  - **Risk by environment:** each asset class is assigned to the environments it's built for (rising or falling growth, rising or falling inflation), and your risk contributions are summed per environment. Balanced is about 25% each.
+  - **Quadrant analogues:** rough one-year analogue returns for each quadrant.
+  - **A balanced mix to compare:** an environment-balanced mix of shares, bonds, gold and commodities, with ties broken toward risk parity. One click makes it your target allocation.
+- **Currency policy:** set where you'll spend (defaults to your expenses' currencies) and a band. You get:
+  - your net exposure per currency (look-through, net of debts);
+  - the gap to policy and natural hedges (debt in the same currency);
+  - suggested actions, naming the holdings that bring each currency.
+- **Return streams:** correlations between your holdings from real monthly total returns (24–60 months).
+  - The number of independent streams is the participation ratio of the correlation matrix's eigenvalues.
+  - It also shows measured volatility and flags near-duplicates (correlation above 0.9).
+
+The regime and return streams need the daily sync and a **Macro** table in your base. Create a table named `Macro` with a `Name` field (primary) and a `Notes` long-text field; the default fields of a new Airtable table already work. The sync writes two rows, `fred` and `prices`, as JSON. FRED's public CSV needs no key.
+
 ## Scenarios
 
 The **Scenarios** tab (or `#scenarios`) tests different allocations against each other, starting from what you hold today.

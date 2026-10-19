@@ -452,6 +452,7 @@
     try { fx = await atLoadFx(); fxTableOk = true; }
     catch (x) { fx = {}; fxTableOk = false; }
     try { nwHistory = await atLoadHistory(); } catch (x) { nwHistory = []; }
+    try { macroData = await atLoadMacro(); } catch (x) { macroData = {}; }
     await loadScenarios();
   }
 
@@ -491,7 +492,7 @@
   // ---------- Lock / unlock ----------
   function lock(reason) {
     if (mode !== 'airtable') return;
-    session = null; items = []; expenses = []; asides = []; scenarios = []; scSel = 'asis'; scDirty = false; nwHistory = []; breakdown = {}; fx = {}; mode = 'locked';
+    session = null; items = []; expenses = []; asides = []; scenarios = []; scSel = 'asis'; scDirty = false; nwHistory = []; macroData = {}; balancedCache = null; breakdown = {}; fx = {}; mode = 'locked';
     document.querySelectorAll('dialog[open]').forEach(d => d.close());
     clearSecrets();
     render();
@@ -1239,7 +1240,7 @@
       ? 'Your data is stored only in this browser. Connect Airtable to sync it across devices, or use Export to back it up.'
       : 'Your data is stored in Airtable. Your token is encrypted on this device, and the app locks after 15 minutes of inactivity.';
     renderOwnerFilter();
-    $('scView').hidden = true; $('plView').hidden = true; $('tabs').hidden = locked;
+    $('scView').hidden = true; $('plView').hidden = true; $('mcView').hidden = true; $('tabs').hidden = locked;
     if (locked) {
       ownerView = '';
       ['totAssets', 'totDebts', 'totNet'].forEach(id => { $(id).textContent = '—'; });
@@ -1852,11 +1853,12 @@
 
   // ---- view switching (Overview | Scenarios) ----
   function showView() {
-    const sc = location.hash === '#scenarios' && mode !== 'locked', pl = location.hash === '#plan' && mode !== 'locked';
-    $('content').hidden = mode === 'locked' || sc || pl; $('scView').hidden = !sc; $('plView').hidden = !pl;
-    for (const [id, on] of [['tabOverview', !sc && !pl], ['tabScen', sc], ['tabPlan', pl]]) { $(id).classList.toggle('on', on); $(id).setAttribute('aria-current', on ? 'page' : 'false'); }
+    const sc = location.hash === '#scenarios' && mode !== 'locked', pl = location.hash === '#plan' && mode !== 'locked', mc = location.hash === '#macro' && mode !== 'locked';
+    $('content').hidden = mode === 'locked' || sc || pl || mc; $('scView').hidden = !sc; $('plView').hidden = !pl; $('mcView').hidden = !mc;
+    for (const [id, on] of [['tabOverview', !sc && !pl && !mc], ['tabScen', sc], ['tabPlan', pl], ['tabMacro', mc]]) { $(id).classList.toggle('on', on); $(id).setAttribute('aria-current', on ? 'page' : 'false'); }
     if (sc) renderScenarios();
     if (pl) renderPlan();
+    if (mc) renderMacro();
   }
   window.addEventListener('hashchange', showView);
 
@@ -2934,6 +2936,368 @@
     };
     hit.addEventListener('pointermove', show); hit.addEventListener('pointerdown', show); hit.addEventListener('pointerleave', () => { cross.setAttribute('visibility', 'hidden'); tip.hidden = true; });
     chart.prepend(svg);
+  }
+
+  // ---------- Macro tab ----------
+  // Data from the daily sync's "Macro" table: row "fred" (monthly FRED series) and row "prices" (monthly closes per
+  // ticker). In browser-only mode there's no sync, so the regime and return streams explain how to get them.
+  let macroData = {};
+  async function atLoadMacro() {
+    const out = {};
+    const j = await at(`${session.baseId}/${encodeURIComponent('Macro')}?pageSize=100`);
+    for (const r of j.records || []) { const f = r.fields || {}; try { out[String(f.Name || '')] = JSON.parse(f.Notes || '{}'); } catch (x) { } }
+    return out;
+  }
+
+  // ---- four environments (All Weather) ----
+  // Each asset class does well when growth or inflation surprise in a particular direction. Following Bridgewater's
+  // framing, every class is assigned to the environments it's built for (half its risk to each), and the portfolio's
+  // risk (Euler contributions from the risk model) is summed per environment. Balanced = about 25% in each.
+  const ENVS = ['Rising growth', 'Falling growth', 'Rising inflation', 'Falling inflation'];
+  const ENV_MAP = {
+    Equities: { 'Rising growth': .5, 'Falling inflation': .5 },
+    Bonds: { 'Falling growth': .5, 'Falling inflation': .5 },
+    Gold: { 'Falling growth': .5, 'Rising inflation': .5 },
+    Commodities: { 'Rising growth': .5, 'Rising inflation': .5 },
+    Property: { 'Rising growth': .5, 'Rising inflation': .5 },
+    Bitcoin: { 'Rising growth': .6, 'Rising inflation': .4 },
+    Other: { 'Rising growth': .25, 'Falling growth': .25, 'Rising inflation': .5 },
+    Cash: { 'Falling growth': .5, 'Rising inflation': .5 }
+  };
+  // Illustrative one-year returns (%) by asset class in each growth/inflation quadrant (rough historical analogues).
+  const QUADS = [
+    { k: 'gi', name: 'Goldilocks', sub: 'Growth rising, inflation falling (e.g. 1990s, 2013–19)', s: { Equities: 15, Bonds: 4, Cash: 3, Gold: -5, Property: 8, Commodities: -5, Bitcoin: 40, Other: 6 } },
+    { k: 'GI', name: 'Inflationary boom', sub: 'Growth rising, inflation rising (e.g. 2004–07, 2021)', s: { Equities: 6, Bonds: -6, Cash: 4, Gold: 12, Property: 8, Commodities: 25, Bitcoin: 30, Other: 8 } },
+    { k: 'Gi', name: 'Stagflation', sub: 'Growth falling, inflation rising (e.g. 1970s, 2022)', s: { Equities: -20, Bonds: -10, Cash: 5, Gold: 25, Property: -8, Commodities: 15, Bitcoin: -50, Other: -5 } },
+    { k: 'gI', name: 'Deflationary bust', sub: 'Growth falling, inflation falling (e.g. 2008, early 2020)', s: { Equities: -30, Bonds: 15, Cash: 2, Gold: 5, Property: -15, Commodities: -35, Bitcoin: -60, Other: -15 } }
+  ];
+  function envShares(M) {
+    const e = Object.fromEntries(ENVS.map(k => [k, 0]));
+    for (const b of BUCKETS) for (const [k, w] of Object.entries(ENV_MAP[b] || {})) e[k] += Math.max(0, M.rc[b]) * w;
+    const t = ENVS.reduce((a, k) => a + e[k], 0) || 1;
+    return Object.fromEntries(ENVS.map(k => [k, e[k] / t]));
+  }
+  const envGap = sh => ENVS.reduce((a, k) => a + (sh[k] - .25) ** 2, 0);
+  // the liquid mix (equities, bonds, gold, commodities) whose risk is most evenly spread across the four environments
+  function balancedMix() {
+    let best = null;
+    for (let e = 0; e <= 100; e += 2.5) for (let b = 0; b <= 100 - e; b += 2.5) for (let g = 0; g <= 100 - e - b; g += 2.5) {
+      const c = 100 - e - b - g, by = { Equities: e, Bonds: b, Cash: 0, Gold: g, Property: 0, Commodities: c, Bitcoin: 0, Other: 0 };
+      const M = riskModel(by, 0); if (!M) continue;
+      // environment balance first; ties broken toward spreading risk across asset classes too (risk parity)
+      const gap = envGap(envShares(M)) + 0.05 * BUCKETS.reduce((a, k) => a + Math.max(0, M.rc[k]) ** 2, 0);
+      if (!best || gap < best.gap - 1e-12) best = { gap, mix: { Equities: e, Bonds: b, Gold: g, Commodities: c }, M };
+    }
+    return best;
+  }
+  let balancedCache = null;
+  function renderEnv() {
+    const vis = visible(), D = vis.filter(i => i.kind === 'debt' && i.value > 0 && !i.noFx).reduce((a, i) => a + i.value, 0);
+    const by = bucketValues(vis), M = riskModel(by, D), sec = $('envSection');
+    if (!M) { sec.hidden = true; return; } sec.hidden = false;
+    const sh = envShares(M);
+    const bars = $('envBars'); bars.textContent = '';
+    for (const k of ENVS) {
+      const row = document.createElement('div'); row.className = 'env-row';
+      const n = document.createElement('span'); n.textContent = k;
+      const t = document.createElement('span'); t.className = 'env-track'; t.title = `${k}: ${(sh[k] * 100).toFixed(0)}% of your risk (balanced ≈ 25%)`;
+      const f = document.createElement('i'); f.style.width = (sh[k] * 100) + '%'; t.append(f);
+      const mark = document.createElement('b'); mark.style.left = '25%'; t.append(mark);
+      const p = document.createElement('span'); p.className = 'pct'; p.textContent = Math.round(sh[k] * 100) + '%';
+      row.append(n, t, p); bars.append(row);
+    }
+    const top = ENVS.slice().sort((a, b) => sh[b] - sh[a]), gap = envGap(sh);
+    $('envVerdict').textContent = `${gap < 0.01 ? 'Well balanced' : gap < 0.04 ? 'Somewhat tilted' : 'Concentrated'}: ${Math.round(sh[top[0]] * 100)}% of your risk depends on ${top[0].toLowerCase()} and only ${Math.round(sh[top[3]] * 100)}% on ${top[3].toLowerCase()}. ` +
+      `You’re positioned for ${top[0].toLowerCase()}${sh[top[1]] > .28 ? ` and ${top[1].toLowerCase()}` : ''}; the marker shows the balanced 25%.`;
+    // quadrant table
+    const nw = M.nw, tbl = $('envQuad'); tbl.textContent = '';
+    const hr = document.createElement('tr'); ['Environment', 'Net worth change', '% of net worth', 'Biggest drag', 'Biggest help'].forEach(t => { const th = document.createElement('th'); th.textContent = t; hr.append(th); });
+    const th = document.createElement('thead'); th.append(hr); tbl.append(th);
+    const tb = document.createElement('tbody'); let worst = null;
+    for (const q of QUADS) {
+      const contrib = BUCKETS.map(b => [b, (by[b] || 0) * (q.s[b] || 0) / 100]).filter(([, v]) => Math.abs(v) > 0.5);
+      const tot = contrib.reduce((a, [, v]) => a + v, 0);
+      if (!worst || tot < worst.tot) worst = { q, tot };
+      const drag = contrib.slice().sort((a, b) => a[1] - b[1])[0], help = contrib.slice().sort((a, b) => b[1] - a[1])[0];
+      const tr = document.createElement('tr');
+      const n = document.createElement('td'); n.className = 'rk-scn'; n.textContent = q.name; const sm = document.createElement('small'); sm.textContent = q.sub; n.append(sm); tr.append(n);
+      const v = document.createElement('td'); v.textContent = (tot >= 0 ? '+' : '−') + fmt(Math.abs(tot)); v.className = tot < -0.5 ? 'rk-neg' : 'rk-pos'; tr.append(v);
+      const pc = document.createElement('td'); pc.textContent = nw > 0 ? (tot >= 0 ? '+' : '−') + Math.abs(tot / nw * 100).toFixed(1) + '%' : '—'; tr.append(pc);
+      const d = document.createElement('td'); d.textContent = drag && drag[1] < 0 ? `${drag[0]} (−${fmtShort(-drag[1]).replace('-', '')})` : '—'; tr.append(d);
+      const h = document.createElement('td'); h.textContent = help && help[1] > 0 ? `${help[0]} (+${fmtShort(help[1])})` : '—'; tr.append(h);
+      tb.append(tr);
+    }
+    tbl.append(tb);
+    // balanced alternative
+    if (!balancedCache) balancedCache = balancedMix();
+    const B = balancedCache, bs = envShares(B.M);
+    $('envBalSub').textContent = `For your investable money, spreading risk evenly would look like ${Object.entries(B.mix).filter(([, w]) => w > 0).map(([k, w]) => `${k.toLowerCase()} ${w}%`).join(', ')}. ` +
+      `Its risk splits ${ENVS.map(k => Math.round(bs[k] * 100) + '%').join(' / ')} across the four environments, and in your worst environment (${worst.q.name.toLowerCase()}) it would ${(() => { const r = Object.entries(B.mix).reduce((a, [k, w]) => a + w / 100 * (worst.q.s[k] || 0), 0); return r >= 0 ? 'gain about ' + r.toFixed(0) + '%' : 'lose about ' + Math.abs(r).toFixed(0) + '%'; })()} instead of ${nw > 0 ? Math.abs(worst.tot / nw * 100).toFixed(0) + '% of net worth' : 'your loss'}.`;
+    const bb = $('envBalBars'); bb.textContent = '';
+    const liqT = BUCKETS.filter(b => b !== 'Property').reduce((a, b) => a + by[b], 0);
+    for (const [lab, o] of [['Now', Object.fromEntries(BUCKETS.map(b => [b, b === 'Property' ? 0 : by[b] / (liqT || 1)]))], ['Balanced', Object.fromEntries(BUCKETS.map(b => [b, (B.mix[b] || 0) / 100]))]]) {
+      const row = document.createElement('div'); row.className = 'sc-arow';
+      const l = document.createElement('span'); l.textContent = lab;
+      const bar = document.createElement('span'); bar.className = 'sc-abar';
+      BUCKETS.forEach((b, ix) => { const w = o[b]; if (w < 0.002) return; const seg = document.createElement('i'); seg.className = 'bk-' + ix; seg.style.width = (w * 100) + '%'; seg.title = `${b} ${(w * 100).toFixed(1)}%`; bar.append(seg); });
+      const a = document.createElement('span'); a.className = 'amt'; a.textContent = lab === 'Now' ? 'excl. property' : '';
+      row.append(l, bar, a); bb.append(row);
+    }
+    const lg = $('envBalLegend'); lg.textContent = '';
+    BUCKETS.forEach((b, ix) => { if (b === 'Property' || (by[b] < 0.5 && !(B.mix[b] > 0))) return; const s = document.createElement('span'); const d = document.createElement('i'); d.className = 'bk-' + ix; s.append(d, b); lg.append(s); });
+    $('envUse').onclick = () => { POL.targets = Object.fromEntries(BUCKETS.map(b => [b, B.mix[b] || 0])); savePrefs(); location.hash = '#plan'; window.scrollTo(0, 0); showBanner('Target allocation set to the environment-balanced mix. Your cash reserve is kept aside; review the trades below.', 'info'); };
+    $('envNote').textContent = 'Assignments follow Bridgewater’s published framing: shares like rising growth and falling inflation; bonds like falling growth and falling inflation; gold likes falling growth and rising inflation; commodities and property like rising growth and inflation. Bitcoin is treated as a growth-and-liquidity asset. Risk uses the Scenarios assumptions (bonds at 6% volatility, i.e. intermediate maturity), which is why a balanced mix holds a lot of bonds; All Weather itself uses longer bonds and inflation-linked bonds. Quadrant returns are rough one-year analogues, not forecasts.';
+  }
+
+  // ---- macro regime ----
+  const fS = (sid, drop = 0) => { const s = ((macroData.fred || {}).series || {})[sid]; const m = s && Array.isArray(s.m) ? s.m : []; return drop ? m.slice(0, Math.max(0, m.length - drop)) : m; };
+  const lastV = m => m.length ? Number(m[m.length - 1][1]) : null;
+  const agoV = (m, n) => m.length > n ? Number(m[m.length - 1 - n][1]) : null;
+  const yoyOf = (m, n = 0) => { const a = agoV(m, n), b = agoV(m, n + 12); return a !== null && b ? (a / b - 1) * 100 : null; };
+  const clamp1 = x => Math.max(-1, Math.min(1, x));
+  function regimeAt(drop) {
+    const sig = [];
+    const add = (group, name, score, value, what) => { if (score !== null && Number.isFinite(score)) sig.push({ group, name, score: clamp1(score), value, what }); };
+    // growth
+    const un = fS('UNRATE', drop);
+    if (un.length >= 15) {
+      const u3 = (agoV(un, 0) + agoV(un, 1) + agoV(un, 2)) / 3, low = Math.min(...un.slice(-15, -3).map(p => Number(p[1])));
+      add('Growth', 'Unemployment trend', -((u3 - low) - 0.25) / 0.35, `${lastV(un).toFixed(1)}%`, `3-month average ${(u3 - low >= 0 ? '+' : '')}${(u3 - low).toFixed(2)} pts vs its 12-month low (0.5+ has marked recessions)`);
+    }
+    const pay = fS('PAYEMS', drop);
+    if (pay.length >= 4) { const g = (lastV(pay) - agoV(pay, 3)) / 3; add('Growth', 'Payroll growth', (g - 75) / 125, `${g >= 0 ? '+' : '−'}${Math.abs(Math.round(g))}k/mo`, '3-month average jobs added (about 100k keeps pace with the labour force)'); }
+    const ip = fS('INDPRO', drop);
+    if (ip.length >= 19) { const y0 = yoyOf(ip), y6 = yoyOf(ip, 6); add('Growth', 'Industrial production', (y0 / 3 + (y0 - y6) / 2) / 2, `${y0 >= 0 ? '+' : ''}${y0.toFixed(1)}% y/y`, `${y0 >= y6 ? 'accelerating' : 'slowing'} from ${y6.toFixed(1)}% six months earlier`); }
+    const hy = fS('BAMLH0A0HYM2', drop);
+    if (hy.length >= 4) { const d = lastV(hy) - agoV(hy, 3); add('Growth', 'Credit spreads', -d / 1.0, `${lastV(hy).toFixed(2)}%`, `${d >= 0 ? 'widened' : 'narrowed'} ${Math.abs(d).toFixed(2)} pts in 3 months (widening = lenders getting nervous)`); }
+    // inflation
+    const cpi = fS('CPIAUCSL', drop);
+    if (cpi.length >= 13) { const y = yoyOf(cpi), a3 = (Math.pow(lastV(cpi) / agoV(cpi, 3), 4) - 1) * 100; add('Inflation', 'CPI momentum', (a3 - y) / 1.5, `${y.toFixed(1)}% y/y`, `last 3 months ran at ${a3.toFixed(1)}% annualised`); }
+    const core = fS('CPILFESL', drop);
+    if (core.length >= 19) { const y0 = yoyOf(core), y6 = yoyOf(core, 6); add('Inflation', 'Core inflation trend', (y0 - y6) / 0.75, `${y0.toFixed(1)}% y/y`, `${y0 >= y6 ? 'up' : 'down'} from ${y6.toFixed(1)}% six months earlier`); }
+    const be = fS('T10YIE', drop);
+    if (be.length >= 4) { const d = lastV(be) - agoV(be, 3); add('Inflation', 'Market inflation expectations', d / 0.3, `${lastV(be).toFixed(2)}%`, `10-year breakeven ${d >= 0 ? 'up' : 'down'} ${Math.abs(d).toFixed(2)} pts in 3 months`); }
+    const avg = g => { const l = sig.filter(s => s.group === g); return l.length ? l.reduce((a, s) => a + s.score, 0) / l.length : null; };
+    return { sig, g: avg('Growth'), i: avg('Inflation') };
+  }
+  const quadOf = (g, i) => g >= 0 ? (i >= 0 ? QUADS[1] : QUADS[0]) : (i >= 0 ? QUADS[2] : QUADS[3]);
+  const dirWord = (x, up, dn) => Math.abs(x) < 0.15 ? 'roughly flat' : x > 0 ? (Math.abs(x) > .5 ? 'clearly ' : '') + up : (Math.abs(x) > .5 ? 'clearly ' : '') + dn;
+  function renderRegime() {
+    const sec = $('rgSection'), fred = macroData.fred;
+    const empty = msg => { $('rgVerdict').textContent = msg; ['rgGrowth', 'rgGrowthSub', 'rgInfl', 'rgInflSub', 'rgImplication', 'rgNote'].forEach(id => { $(id).textContent = ''; }); $('rgMap').textContent = ''; $('rgSignals').textContent = ''; $('rgMarkets').textContent = ''; };
+    sec.hidden = false;
+    if (!fred || !fred.series) { empty(mode === 'airtable' ? 'Waiting for data: add a “Macro” table to your base (see the README) and the daily sync will fill it with indicators from the St. Louis Fed (FRED).' : 'The macro regime needs the daily sync, which runs in Airtable mode.'); return; }
+    const R = regimeAt(0);
+    if (R.g === null || R.i === null) { empty('Not enough indicator history yet.'); return; }
+    const Q = quadOf(R.g, R.i);
+    $('rgGrowth').textContent = dirWord(R.g, 'rising', 'falling'); $('rgGrowthSub').textContent = `Score ${R.g >= 0 ? '+' : ''}${R.g.toFixed(2)} from ${R.sig.filter(s => s.group === 'Growth').length} signals (−1 to +1).`;
+    $('rgInfl').textContent = dirWord(R.i, 'rising', 'falling'); $('rgInflSub').textContent = `Score ${R.i >= 0 ? '+' : ''}${R.i.toFixed(2)} from ${R.sig.filter(s => s.group === 'Inflation').length} signals.`;
+    const weak = Math.min(Math.abs(R.g), Math.abs(R.i)) < 0.15;
+    $('rgVerdict').textContent = `${weak ? 'Leaning toward' : 'Heading toward'} ${Q.name.toLowerCase()}: growth ${dirWord(R.g, 'rising', 'falling')}, inflation ${dirWord(R.i, 'rising', 'falling')}. Data as of ${fred.asOf || 'the last sync'}.`;
+    // 2x2 map with a 6-month trail
+    const trail = []; for (let d = 6; d >= 0; d--) { const r = regimeAt(d); if (r.g !== null && r.i !== null) trail.push({ d, g: r.g, i: r.i }); }
+    const W = 340, H = 280, P = 26, cl = v => Math.max(-0.75, Math.min(0.75, v)), x = g => P + (cl(g) + 1) / 2 * (W - 2 * P), y = i => H - P - (cl(i) + 1) / 2 * (H - 2 * P);
+    const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': `Regime map: growth ${R.g.toFixed(2)}, inflation ${R.i.toFixed(2)}, ${Q.name}. Dashed trail shows the last six months.` });
+    const qs = [[QUADS[2], 0, 0], [QUADS[1], 1, 0], [QUADS[3], 0, 1], [QUADS[0], 1, 1]];
+    for (const [q, cx, cy] of qs) {
+      const rx = cx ? W / 2 : P, ry = cy ? H / 2 : P;
+      el('rect', { x: rx, y: ry, width: W / 2 - P, height: H / 2 - P, class: q === Q ? 'q-on' : '', fill: q === Q ? '' : 'transparent' }, svg);
+      el('text', { x: rx + (W / 2 - P) / 2, y: cy ? H - P - 8 : P + 14, class: 'q-lab', 'text-anchor': 'middle' }, svg).textContent = q.name;
+    }
+    el('line', { x1: W / 2, x2: W / 2, y1: P, y2: H - P, class: 'ax' }, svg); el('line', { x1: P, x2: W - P, y1: H / 2, y2: H / 2, class: 'ax' }, svg);
+    el('text', { x: W - P, y: H / 2 - 4, class: 'ax-t', 'text-anchor': 'end' }, svg).textContent = 'growth ↑';
+    el('text', { x: P, y: H / 2 - 4, class: 'ax-t' }, svg).textContent = 'growth ↓';
+    el('text', { x: W / 2 + 4, y: P - 8, class: 'ax-t' }, svg).textContent = 'inflation ↑';
+    el('text', { x: W / 2 + 4, y: H - P + 16, class: 'ax-t' }, svg).textContent = 'inflation ↓';
+    if (trail.length > 1) el('path', { class: 'trail', d: trail.map((t, k) => (k ? 'L' : 'M') + x(t.g).toFixed(1) + ' ' + y(t.i).toFixed(1)).join(' ') }, svg);
+    for (const t of trail.slice(0, -1)) { const c = el('circle', { class: 'pt', cx: x(t.g), cy: y(t.i), r: 3 }, svg); el('title', {}, c).textContent = `${t.d} month${t.d > 1 ? 's' : ''} ago`; }
+    const now = el('circle', { class: 'now', cx: x(R.g), cy: y(R.i), r: 7 }, svg); el('title', {}, now).textContent = 'Now';
+    $('rgMap').textContent = ''; $('rgMap').append(svg);
+    // signals table
+    const st = $('rgSignals'); st.textContent = '';
+    const h1 = document.createElement('tr'); ['Signal', 'Latest', 'Reading', 'What it says'].forEach(t => { const th = document.createElement('th'); th.textContent = t; h1.append(th); });
+    const th1 = document.createElement('thead'); th1.append(h1); st.append(th1);
+    const tb1 = document.createElement('tbody');
+    for (const s of R.sig) {
+      const tr = document.createElement('tr');
+      const n = document.createElement('td'); n.textContent = `${s.group}: ${s.name}`; tr.append(n);
+      const v = document.createElement('td'); v.textContent = s.value; tr.append(v);
+      const r = document.createElement('td'); r.textContent = `${s.score > 0.15 ? '↑' : s.score < -0.15 ? '↓' : '→'} ${s.score >= 0 ? '+' : ''}${s.score.toFixed(2)}`; tr.append(r);
+      const w = document.createElement('td'); w.className = 'rg-what'; w.textContent = s.what; tr.append(w);
+      tb1.append(tr);
+    }
+    st.append(tb1);
+    // markets table
+    const mk = $('rgMarkets'); mk.textContent = '';
+    const h2 = document.createElement('tr'); ['Market', 'Latest', '3-month change', 'Why it matters'].forEach(t => { const th = document.createElement('th'); th.textContent = t; h2.append(th); });
+    const th2 = document.createElement('thead'); th2.append(h2); mk.append(th2);
+    const tb2 = document.createElement('tbody');
+    const MK = [['DFF', 'Fed funds rate', '%', 'The price of money; your cash yield follows it'], ['DGS10', 'US 10-year yield', '%', 'Discount rate for every asset; rising hurts bonds and long-duration shares'],
+      ['DFII10', 'US 10-year real yield', '%', 'The return after inflation; high real yields pressure gold and growth stocks'], ['T10YIE', '10-year breakeven inflation', '%', 'What bond markets expect inflation to average'],
+      ['T10Y2Y', 'Yield curve (10y − 2y)', ' pts', 'Below zero has preceded most US recessions'], ['BAMLH0A0HYM2', 'High-yield spread', '%', 'Extra yield lenders demand from riskier companies'],
+      ['DTWEXBGS', 'US dollar index', '', 'A stronger dollar shrinks the dollar value of your AUD and GBP holdings'], ['IRLTLT01AUM156N', 'Australia 10-year yield', '%', 'Australian rates: your mortgage and property'],
+      ['IRLTLT01GBM156N', 'UK 10-year yield', '%', 'UK rates and sterling']];
+    for (const [sid, name, unit, why] of MK) {
+      const m = fS(sid); if (!m.length) continue;
+      const v = lastV(m), a = agoV(m, 3), tr = document.createElement('tr');
+      const ch = a === null ? '—' : unit === '' ? `${v >= a ? '+' : '−'}${Math.abs((v / a - 1) * 100).toFixed(1)}%` : `${v >= a ? '+' : '−'}${Math.abs(v - a).toFixed(2)}${unit === '%' ? ' pts' : unit}`;
+      [name, unit === '' ? v.toFixed(1) : v.toFixed(2) + (unit === '%' ? '%' : unit), ch].forEach(t => { const td = document.createElement('td'); td.textContent = t; tr.append(td); });
+      const w = document.createElement('td'); w.className = 'rg-what'; w.textContent = why; tr.append(w);
+      tb2.append(tr);
+    }
+    mk.append(tb2);
+    // implication for this portfolio
+    const vis = visible(), by = bucketValues(vis), D = vis.filter(i => i.kind === 'debt' && i.value > 0 && !i.noFx).reduce((a, i) => a + i.value, 0), nw = Object.values(by).reduce((a, b) => a + b, 0) - D;
+    const tot = BUCKETS.reduce((a, b) => a + (by[b] || 0) * (Q.s[b] || 0) / 100, 0);
+    const helps = BUCKETS.filter(b => (Q.s[b] || 0) > 5).map(b => b.toLowerCase()), hurts = BUCKETS.filter(b => (Q.s[b] || 0) < -5 && by[b] > 0.5).map(b => b.toLowerCase());
+    $('rgImplication').textContent = `If ${Q.name.toLowerCase()} plays out over a year, your portfolio would move roughly ${tot >= 0 ? '+' : '−'}${fmt(Math.abs(tot))}${nw > 0 ? ` (${tot >= 0 ? '+' : '−'}${Math.abs(tot / nw * 100).toFixed(1)}% of net worth)` : ''}. Typically helped: ${helps.join(', ') || 'little'}. Exposed: ${hurts.join(', ') || 'little'}.`;
+    $('rgNote').textContent = 'Scores compare each indicator with its own recent trend (direction, not level) and average them per side; the dashed trail shows the last six months. Regimes shift slowly and signals are often mixed: Bridgewater’s own advice is to stay balanced rather than bet on the call. Source: Federal Reserve Bank of St. Louis (FRED), refreshed by the daily sync.';
+  }
+
+  // ---- currency policy ----
+  const CPOL = prefs.cpol = Object.assign({ mix: null, band: 10, real: true }, prefs.cpol || {});
+  function cpolMixDefault() {
+    const spend = {}; let t = 0;
+    for (const e of expView()) if (e.monthly) { spend[e.currency] = (spend[e.currency] || 0) + e.monthly; t += e.monthly; }
+    if (!t) return { [dispCur()]: 100 };
+    return roundTo100(Object.fromEntries(Object.entries(spend).map(([c, v]) => [c, v / t * 100])));
+  }
+  function renderCpol() {
+    const vis = visible(), xp = exposures(vis).currency, sec = $('cpolSection');
+    const net = Object.fromEntries(Object.entries(xp).map(([c, e]) => [c, e.assets - e.debts]));
+    const stateless = ['XAU', 'BTC'].reduce((a, c) => a + Math.max(0, net[c] || 0), 0);
+    const curs = Object.keys(net).filter(c => !(CPOL.real && PRICED.includes(c)));
+    const T = curs.reduce((a, c) => a + net[c], 0);
+    if (!(T > 0)) { sec.hidden = true; return; } sec.hidden = false;
+    const mix = CPOL.mix || cpolMixDefault();
+    // spending-mix inputs: every currency you hold or spend in
+    const box = $('cpolMix'); box.textContent = '';
+    const cand = [...new Set([...Object.keys(mix), ...curs.filter(c => !PRICED.includes(c) && Math.abs(net[c]) / T > 0.02 && HOME_OF[c])])];
+    const lab0 = document.createElement('label'); lab0.className = 'inline'; lab0.style.color = 'var(--muted)'; lab0.textContent = 'Where you’ll spend (%):'; box.append(lab0);
+    for (const c of cand) {
+      const l = document.createElement('label'); l.textContent = c;
+      const inp = document.createElement('input'); inp.type = 'number'; inp.min = '0'; inp.max = '100'; inp.step = '5'; inp.value = mix[c] || 0; inp.setAttribute('aria-label', `Share of future spending in ${c}`);
+      inp.onchange = () => { CPOL.mix = { ...mix, [c]: Math.max(0, Math.min(100, Number(inp.value) || 0)) }; savePrefs(); renderCpol(); };
+      l.append(inp); box.append(l);
+    }
+    $('cpolBand').value = CPOL.band; $('cpolReal').checked = !!CPOL.real;
+    const ms = Object.values(mix).reduce((a, b) => a + b, 0), ok = Math.abs(ms - 100) < 0.5;
+    const band = Number(CPOL.band) || 10;
+    const rows = [...new Set([...curs, ...Object.keys(mix)])].map(c => {
+      const now = (net[c] || 0) / T * 100, tgt = ok ? (mix[c] || 0) : 0;
+      return { c, now, tgt, gap: now - tgt, v: net[c] || 0, out: ok && Math.abs(now - tgt) > band, assets: (xp[c] || {}).assets || 0, debts: (xp[c] || {}).debts || 0 };
+    }).filter(r => Math.abs(r.v) > 0.5 || r.tgt > 0).sort((a, b) => b.v - a.v);
+    const tbl = $('cpolTable'); tbl.textContent = '';
+    const hr = document.createElement('tr'); ['Currency', 'Assets', 'Debts', 'Net', 'Now', 'Policy', 'Gap', 'Status'].forEach(t => { const th = document.createElement('th'); th.textContent = t; hr.append(th); });
+    const th = document.createElement('thead'); th.append(hr); tbl.append(th);
+    const tb = document.createElement('tbody');
+    for (const r of rows) {
+      const tr = document.createElement('tr');
+      [`${r.c}${CUR_NAME[r.c] ? ' · ' + CUR_NAME[r.c] : ''}`, fmtShort(r.assets), r.debts ? '−' + fmtShort(r.debts) : '—', fmtShort(r.v), r.now.toFixed(1) + '%', ok ? r.tgt.toFixed(0) + '%' : '—', ok ? `${r.gap >= 0 ? '+' : '−'}${Math.abs(r.gap).toFixed(1)} pts` : '—'].forEach(t => { const td = document.createElement('td'); td.textContent = t; tr.append(td); });
+      const s = document.createElement('td'); s.className = 'ta-st ' + (r.out ? 'rk-warning' : 'rk-good');
+      const ic = document.createElement('span'); ic.className = 'rk-ico'; ic.textContent = r.out ? '!' : '✓'; ic.setAttribute('aria-hidden', 'true');
+      s.append(ic, !ok ? '—' : r.out ? (r.gap > 0 ? 'Over' : 'Under') : 'In band'); tr.append(s);
+      tb.append(tr);
+    }
+    tbl.append(tb);
+    const outside = rows.filter(r => !(mix[r.c] > 0)).reduce((a, r) => a + Math.max(0, r.v), 0);
+    const breaches = rows.filter(r => r.out);
+    $('cpolVerdict').textContent = !ok ? `Your spending mix adds up to ${ms}%. Make it 100% to compare.` :
+      `${Math.round(outside / T * 100)}% of your currency exposure is in currencies you don’t plan to spend in${stateless > 0.5 && CPOL.real ? ` (plus ${fmt(stateless)} in gold and bitcoin, left out)` : ''}. ` + (breaches.length ? `${breaches.length} currenc${breaches.length > 1 ? 'ies are' : 'y is'} outside the ±${band}-point band.` : 'Everything is within the band.');
+    // actions
+    const act = $('cpolActions'); act.textContent = '';
+    const item = (amt, text, note) => { const row = document.createElement('div'); row.className = 'ta-move'; const a = document.createElement('span'); a.className = 'amt'; a.textContent = amt; const d = document.createElement('span'); d.textContent = text; if (note) { const sm = document.createElement('small'); sm.textContent = note; d.append(sm); } row.append(a, d); act.append(row); };
+    for (const r of rows.filter(r => r.debts > 0.5 && r.assets > 0.5)) item(Math.round(Math.min(1, r.debts / r.assets) * 100) + '%', `of your ${r.c} assets are offset by ${r.c} debt`, `A natural hedge: if the ${CUR_NAME[r.c] || r.c} falls, your ${r.c} debt shrinks in ${dispCur()} too.`);
+    if (ok) for (const r of breaches) {
+      const amt = Math.abs(r.gap) / 100 * T;
+      if (r.gap > 0) {
+        // which holdings bring this currency
+        const src = vis.filter(i => i.kind === 'asset' && i.value > 0 && !i.noFx).map(i => [i, (exposures([i]).currency[r.c] || {}).assets || 0]).filter(([, v]) => v > 0.5).sort((a, b) => b[1] - a[1]).slice(0, 2);
+        item(fmt(amt), `Reduce ${r.c} exposure (${r.now.toFixed(0)}% vs ${r.tgt}% policy)`, src.length ? `Mostly from ${src.map(([i, v]) => `${i.name} (${fmtShort(v)})`).join(' and ')}. ${PRICED.includes(r.c) ? 'Trim the position, or accept it as a deliberate bet.' : HOME_OF[r.c] && r.c !== dispCur() && src.some(([i]) => i.currency !== r.c) ? 'Use currency-hedged share classes for the international part, or hold more in your spending currencies.' : `Hold more in your spending currencies, or borrow in ${r.c} against it.`}` : '');
+      } else item(fmt(amt), `Build ${r.c} exposure (${r.now.toFixed(0)}% vs ${r.tgt}% policy)`, `New savings in ${r.c} assets, or ${r.c}-hedged versions of what you already hold.`);
+    }
+    if (!act.children.length) item('✓', 'No action needed', 'Your currency mix is within your policy band.');
+    $('cpolNote').textContent = 'Look-through: international share funds count in the currencies of the markets they own (assumed unhedged); bond funds and cash count in their own currency; debts subtract. The policy is your expected future spending by currency, saved in this browser. Hedging has a cost (roughly the interest-rate gap between the two currencies).';
+  }
+  $('cpolBand').onchange = () => { CPOL.band = clampNum($('cpolBand').value, 1, 50, 10); savePrefs(); renderCpol(); };
+  $('cpolReal').onchange = () => { CPOL.real = $('cpolReal').checked; savePrefs(); renderCpol(); };
+
+  // ---- return streams ----
+  // Monthly total returns from the sync's price history; correlations over the common window (24–60 months).
+  // Independent streams = participation ratio of the correlation matrix's eigenvalues ((Σλ)² / Σλ²): N for N
+  // uncorrelated streams, 1 if they all move together.
+  function jacobiEig(A) {
+    const n = A.length, a = A.map(r => r.slice());
+    for (let sweep = 0; sweep < 60; sweep++) {
+      let off = 0; for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) off += a[i][j] * a[i][j];
+      if (off < 1e-12) break;
+      for (let p = 0; p < n; p++) for (let q = p + 1; q < n; q++) {
+        if (Math.abs(a[p][q]) < 1e-14) continue;
+        const th = (a[q][q] - a[p][p]) / (2 * a[p][q]), t = Math.sign(th || 1) / (Math.abs(th) + Math.sqrt(th * th + 1)), c = 1 / Math.sqrt(t * t + 1), s = t * c;
+        for (let k = 0; k < n; k++) { const akp = a[k][p], akq = a[k][q]; a[k][p] = c * akp - s * akq; a[k][q] = s * akp + c * akq; }
+        for (let k = 0; k < n; k++) { const apk = a[p][k], aqk = a[q][k]; a[p][k] = c * apk - s * aqk; a[q][k] = s * apk + c * aqk; }
+      }
+    }
+    return a.map((r, i) => r[i]);
+  }
+  const RS_POS = ['#b7d3f6', '#86b6ef', '#3987e5', '#1c5cab'], RS_NEG = ['#f6c9c8', '#ef9a99', '#e66767', '#b52e2d'];
+  function renderStreams() {
+    const sec = $('rsSection'), prices = macroData.prices;
+    const reset = msg => { ['rsEff', 'rsAvg', 'rsVol'].forEach(id => { $(id).textContent = '—'; }); ['rsEffSub', 'rsAvgSub', 'rsVolSub', 'rsDupes'].forEach(id => { $(id).textContent = ''; }); $('rsHeat').textContent = ''; $('rsNote').textContent = msg; };
+    sec.hidden = false;
+    if (!prices || typeof prices !== 'object') { reset(mode === 'airtable' ? 'Waiting for data: once the “Macro” table exists, the daily sync saves monthly prices for each holding with a ticker.' : 'Return streams need the daily sync’s price history (Airtable mode).'); return; }
+    const vis = visible().filter(i => i.kind === 'asset' && i.value > 0 && !i.noFx);
+    const keyOf = i => i.ticker || ({ BTC: 'coin:BTC', XAU: 'coin:XAU' })[i.currency] || '';
+    const groups = {};
+    for (const i of vis) { const k = keyOf(i); if (!k) continue; (groups[k] = groups[k] || { k, names: [], value: 0 }).names.push(i.name); groups[k].value += i.value; }
+    const series = Object.values(groups).map(g => {
+      const m = ((prices[g.k] || {}).m || []).filter(p => Array.isArray(p) && Number(p[1]) > 0);
+      const ret = {}; for (let j = 1; j < m.length; j++) ret[m[j][0]] = m[j][1] / m[j - 1][1] - 1;
+      return { ...g, ret, label: g.k.startsWith('coin:') ? (g.k === 'coin:BTC' ? 'Bitcoin' : 'Gold') : g.k };
+    }).filter(s => Object.keys(s.ret).length >= 24);
+    const missing = Object.values(groups).filter(g => !series.some(s => s.k === g.k)).map(g => g.k.replace('coin:', ''));
+    if (series.length < 2) { reset(`Not enough price history yet (need 24+ months for at least two holdings).${missing.length ? ' Without data: ' + missing.join(', ') + '.' : ''}`); return; }
+    let months = Object.keys(series[0].ret); for (const s of series.slice(1)) months = months.filter(m => m in s.ret);
+    months = months.sort().slice(-60);
+    const use = months.length >= 24 ? series : series.filter(s => Object.keys(s.ret).length >= 24);
+    const n = use.length, X = use.map(s => months.map(m => s.ret[m]));
+    const mean = X.map(r => r.reduce((a, b) => a + b, 0) / r.length), sd = X.map((r, k) => Math.sqrt(r.reduce((a, b) => a + (b - mean[k]) ** 2, 0) / (r.length - 1)));
+    const C = X.map((r, a) => X.map((q, b) => a === b ? 1 : r.reduce((t, v, k) => t + (v - mean[a]) * (q[k] - mean[b]), 0) / ((r.length - 1) * sd[a] * sd[b] || 1)));
+    const lam = jacobiEig(C).map(v => Math.max(0, v)), eff = lam.reduce((a, b) => a + b, 0) ** 2 / lam.reduce((a, b) => a + b * b, 0);
+    let pairs = 0, sum = 0; for (let a = 0; a < n; a++) for (let b = a + 1; b < n; b++) { pairs++; sum += C[a][b]; }
+    const avg = sum / pairs;
+    // value-weighted realised volatility of the priced part
+    const W = use.map(s => s.value), WT = W.reduce((a, b) => a + b, 0), wv = W.map(w => w / WT);
+    let pv = 0; for (let a = 0; a < n; a++) for (let b = 0; b < n; b++) pv += wv[a] * wv[b] * C[a][b] * sd[a] * sd[b];
+    const vol = Math.sqrt(pv * 12);
+    $('rsEff').textContent = eff.toFixed(1); $('rsEffSub').textContent = `out of ${n} holdings with price history. Bridgewater aims for 10–15 genuinely uncorrelated streams.`;
+    $('rsAvg').textContent = avg.toFixed(2); $('rsAvgSub').textContent = `between pairs, over ${months.length} months to ${months[months.length - 1]}. Below 0.3 is diversifying; above 0.8 is the same bet.`;
+    $('rsVol').textContent = (vol * 100).toFixed(1) + '%'; $('rsVolSub').textContent = `a year for these ${n} holdings (value-weighted), from actual monthly returns.`;
+    const tbl = $('rsHeat'); tbl.textContent = '';
+    const hr = document.createElement('tr'); hr.append(document.createElement('th'));
+    for (const s of use) { const th = document.createElement('th'); th.textContent = s.label; th.title = s.names.join(', '); hr.append(th); }
+    const th = document.createElement('thead'); th.append(hr); tbl.append(th);
+    const tb = document.createElement('tbody');
+    use.forEach((s, a) => {
+      const tr = document.createElement('tr'); const h = document.createElement('th'); h.textContent = s.label; h.title = s.names.join(', '); tr.append(h);
+      use.forEach((q, b) => {
+        const td = document.createElement('td'), v = C[a][b];
+        td.textContent = a === b ? '1' : v.toFixed(2);
+        if (a === b) td.className = 'self';
+        else { const step = Math.min(3, Math.floor(Math.abs(v) * 4)); td.style.background = (v >= 0 ? RS_POS : RS_NEG)[step]; if (step >= 2) td.className = 'dark'; }
+        td.title = `${s.label} vs ${q.label}: ${v.toFixed(2)}`; tr.append(td);
+      });
+      tb.append(tr);
+    });
+    tbl.append(tb);
+    const dupes = []; for (let a = 0; a < n; a++) for (let b = a + 1; b < n; b++) if (C[a][b] > 0.9) dupes.push(`${use[a].label} & ${use[b].label} (${C[a][b].toFixed(2)})`);
+    $('rsDupes').textContent = dupes.length ? `Near-duplicates (correlation above 0.9): ${dupes.join(', ')}. Holding both adds little diversification.` : 'No near-duplicates (nothing correlated above 0.9).';
+    $('rsNote').textContent = `Total returns (dividends reinvested) from Alpha Vantage monthly prices, refreshed by the daily sync; gold uses IAU as a proxy. Not included (no price history): ${missing.length ? missing.join(', ') : 'nothing'}, nor cash and property. Correlations rise in crises, so real-world diversification is usually lower than this shows.`;
+  }
+
+  function renderMacro() {
+    if (mode === 'locked') return;
+    renderRegime(); renderEnv(); renderCpol(); renderStreams();
   }
 
   // ---------- Start ----------
