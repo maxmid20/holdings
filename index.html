@@ -6,8 +6,8 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://api.airtable.com; form-action 'none'; base-uri 'none'; object-src 'none'">
 <meta name="referrer" content="no-referrer">
 <title>Holdings</title>
-<link rel="stylesheet" href="styles.css?v=2026-10-18o">
-<script src="app.js?v=2026-10-18o" defer></script>
+<link rel="stylesheet" href="styles.css?v=2026-10-18p">
+<script src="app.js?v=2026-10-18p" defer></script>
 </head>
 <body>
 <div class="wrap">
@@ -26,6 +26,7 @@
   <nav class="tabs" id="tabs" aria-label="Views">
     <a href="#" id="tabOverview" class="tab on" aria-current="page">Overview</a>
     <a href="#scenarios" id="tabScen" class="tab">Scenarios</a>
+    <a href="#plan" id="tabPlan" class="tab">Plan</a>
   </nav>
 
   <div id="banner" class="banner" role="status" hidden><span id="bannerText"></span><button type="button" id="bannerClose" aria-label="Dismiss">✕</button></div>
@@ -44,6 +45,18 @@
   </div>
 
   <div id="content">
+    <div class="section" id="hsSection" hidden>
+      <div class="section-head"><h2>Net worth history</h2><div class="sc-tabs hs-range" id="hsRange" role="group" aria-label="Period"></div></div>
+      <div class="card">
+        <div class="mv-stats">
+          <div><div class="label">Change</div><div class="ret-big" id="hsChange"></div><div class="hint" id="hsChangeSub"></div></div>
+          <div><div class="label">From money you put in</div><div class="ret-big" id="hsContrib"></div><div class="hint" id="hsContribSub"></div></div>
+          <div><div class="label">From markets &amp; revaluation</div><div class="ret-big" id="hsGrowth"></div><div class="hint" id="hsGrowthSub"></div></div>
+        </div>
+        <div class="proj-chart" id="hsChart"><div class="proj-tip" id="hsTip" hidden></div></div>
+        <p class="hint" id="hsNote"></p>
+      </div>
+    </div>
     <div class="section" id="mixSection" hidden>
       <div class="section-head"><h2>Your real mix</h2><span class="hint" id="mixHint"></span></div>
       <div class="card">
@@ -151,6 +164,78 @@
       <div class="section-head"><h2>Debts</h2><button class="btn primary" type="button" data-add="debt">+ Add debt</button></div>
       <div id="debts"></div>
       <p class="hint debt-plan" id="debtPlan"></p>
+    </div>
+  </div>
+
+  <div id="plView" hidden>
+    <div class="section" id="taSection">
+      <div class="section-head"><h2>Target allocation</h2><span class="hint">Your investment policy, how far you’ve drifted, and the trades to fix it</span></div>
+      <div class="card">
+        <div class="proj-controls">
+          <label>Start from<select id="taPreset">
+            <option value="">Choose…</option>
+            <option value="current">My current mix</option>
+            <option value="growth">Growth 90/10</option>
+            <option value="balanced">Balanced 60/40</option>
+            <option value="conservative">Conservative 40/60</option>
+            <option value="permanent">Permanent portfolio (25 × 4)</option>
+            <option value="realassets">Real assets tilt</option>
+          </select></label>
+          <label>Band ± points<input id="taBand" type="number" min="1" max="25" step="1"></label>
+          <label>Cash reserve (months)<input id="taReserve" type="number" min="0" max="60" step="1"></label>
+          <label class="inline"><input id="taProp" type="checkbox"> Include property</label>
+          <label class="inline"><input id="taBreach" type="checkbox"> Only fix breaches</label>
+        </div>
+        <p class="hint" id="taBase"></p>
+        <div class="proj-table-wrap"><table class="proj-table ta-table" id="taTable"></table></div>
+        <p class="hint" id="taSum"></p>
+        <h3 class="mv-h">Rebalancing plan</h3>
+        <div id="taPlan"></div>
+        <p class="hint" id="taRisk"></p>
+        <div class="mv-actions"><button class="btn primary" type="button" id="taLoad">Test this plan in the what-if</button></div>
+        <p class="hint" id="taNote"></p>
+      </div>
+    </div>
+
+    <div class="section" id="fiSection">
+      <div class="section-head"><h2>Financial independence</h2><span class="hint">When your investments could pay for your life</span></div>
+      <div class="card">
+        <div class="proj-controls">
+          <label>Your age<input id="fiAge" type="number" min="16" max="100" step="1"></label>
+          <label>Target age<input id="fiTarget" type="number" min="17" max="100" step="1"></label>
+          <label>Spending / yr<input id="fiSpend" type="number" min="0" step="any"></label>
+          <label>Withdrawal %<input id="fiWR" type="number" min="2" max="8" step="0.1"></label>
+          <label class="inline"><input id="fiProp" type="checkbox"> Count property</label>
+        </div>
+        <div class="mv-stats">
+          <div><div class="label">Your FI number</div><div class="ret-big" id="fiNum"></div><div class="hint" id="fiNumSub"></div></div>
+          <div><div class="label">Progress</div><div class="ret-big" id="fiProg"></div><div class="hint" id="fiProgSub"></div></div>
+          <div><div class="label">Independent at</div><div class="ret-big" id="fiWhen"></div><div class="hint" id="fiWhenSub"></div></div>
+        </div>
+        <div class="bar fi-bar" id="fiBar"></div>
+        <p class="rk-verdict fi-verdict" id="fiVerdict"></p>
+        <p class="hint" id="fiNote"></p>
+      </div>
+    </div>
+
+    <div class="section" id="glSection">
+      <div class="section-head"><h2>Goals</h2><button class="btn primary" type="button" id="glAdd">+ Add goal</button></div>
+      <div class="card"><div id="glList"></div><p class="hint" id="glNote"></p></div>
+    </div>
+
+    <div class="section" id="cmSection">
+      <div class="section-head"><h2>Expat tax &amp; reporting checks</h2><span class="hint">Flags to raise with a cross-border tax adviser, not advice</span></div>
+      <div class="card">
+        <div class="proj-controls">
+          <label>US taxpayer?<select id="cmUS"><option value="">Not set</option><option value="yes">Yes: citizen, green card or US resident</option><option value="no">No</option></select></label>
+          <label>Living in the US?<select id="cmLive"><option value="yes">Yes</option><option value="no">No</option></select></label>
+          <label>US filing status<select id="cmFiling"><option value="single">Single / married separately</option><option value="joint">Married filing jointly</option></select></label>
+          <label class="inline"><input id="cmUK" type="checkbox"> UK tax resident</label>
+          <label class="inline"><input id="cmAU" type="checkbox"> Australian tax resident</label>
+        </div>
+        <div class="rk-score" id="cmList"></div>
+        <p class="hint" id="cmNote"></p>
+      </div>
     </div>
   </div>
 

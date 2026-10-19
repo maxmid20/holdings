@@ -436,6 +436,7 @@
     catch (x) { expenses = []; expTableOk = false; }
     try { fx = await atLoadFx(); fxTableOk = true; }
     catch (x) { fx = {}; fxTableOk = false; }
+    try { nwHistory = await atLoadHistory(); } catch (x) { nwHistory = []; }
     await loadScenarios();
   }
 
@@ -475,7 +476,7 @@
   // ---------- Lock / unlock ----------
   function lock(reason) {
     if (mode !== 'airtable') return;
-    session = null; items = []; expenses = []; asides = []; scenarios = []; scSel = 'asis'; scDirty = false; breakdown = {}; fx = {}; mode = 'locked';
+    session = null; items = []; expenses = []; asides = []; scenarios = []; scSel = 'asis'; scDirty = false; nwHistory = []; breakdown = {}; fx = {}; mode = 'locked';
     document.querySelectorAll('dialog[open]').forEach(d => d.close());
     clearSecrets();
     render();
@@ -1223,13 +1224,13 @@
       ? 'Your data is stored only in this browser. Connect Airtable to sync it across devices, or use Export to back it up.'
       : 'Your data is stored in Airtable. Your token is encrypted on this device, and the app locks after 15 minutes of inactivity.';
     renderOwnerFilter();
-    $('scView').hidden = true; $('tabs').hidden = locked;
+    $('scView').hidden = true; $('plView').hidden = true; $('tabs').hidden = locked;
     if (locked) {
       ownerView = '';
       ['totAssets', 'totDebts', 'totNet'].forEach(id => { $(id).textContent = '—'; });
-      $('mixSection').hidden = true; $('rkSection').hidden = true; $('xpSection').hidden = true; $('cpSection').hidden = true; $('retSection').hidden = true; $('efSection').hidden = true; $('projSection').hidden = true; $('projTip').hidden = true; $('fxNote').hidden = true;
+      $('mixSection').hidden = true; $('hsSection').hidden = true; $('rkSection').hidden = true; $('xpSection').hidden = true; $('cpSection').hidden = true; $('retSection').hidden = true; $('efSection').hidden = true; $('projSection').hidden = true; $('projTip').hidden = true; $('fxNote').hidden = true;
       [...$('projChart').querySelectorAll('svg')].forEach(n => n.remove()); $('projTable').textContent = ''; $('projHeadline').textContent = '';
-      ['assets', 'debts', 'assetMix', 'lookBar', 'lookTable', 'mixHint', 'fName', 'fNote', 'fVal', 'fAcct', 'fFund', 'fOwner', 'fTicker', 'fShares', 'fRate', 'fMonthly', 'fYears', 'fWO', 'debtPlan', 'fRet12', 'fRet5', 'fRetHint', 'rkVerdict', 'rkProfile', 'rkProfileSub', 'rkVar', 'rkVarSub', 'rkDiv', 'rkDivSub', 'rkBars', 'rkLegend', 'rkRiskNote', 'rkStress', 'rkScore', 'cpList', 'cpUninsured', 'cpUninsuredSub', 'cpTop', 'cpTopSub', 'cpNote', 'fInst', 'instList', 'xpCountry', 'xpCurrency', 'xpCountryNote', 'xpSpend', 'xpNote', 'retTable', 'retAll', 'retAllSub', 'retFunds', 'retFundsSub', 'retNote', 'efList', 'efCalc', 'asName', 'asAmt', 'asNote', 'efMonths', 'efUnit', 'efSub', 'efAll', 'efBar', 'efVerdict', 'efFundInfo', 'efPickList', 'eName', 'eAmt', 'eOwner', 'eNote', 'tidyList', 'fxList', 'fxText', 'acctList', 'ownerList', 'fundList']
+      ['assets', 'debts', 'assetMix', 'lookBar', 'lookTable', 'mixHint', 'fName', 'fNote', 'fVal', 'fAcct', 'fFund', 'fOwner', 'fTicker', 'fShares', 'fRate', 'fMonthly', 'fYears', 'fWO', 'debtPlan', 'fRet12', 'fRet5', 'fRetHint', 'hsChange', 'hsChangeSub', 'hsContrib', 'hsContribSub', 'hsGrowth', 'hsGrowthSub', 'hsNote', 'hsRange', 'taTable', 'taPlan', 'taBase', 'taSum', 'taRisk', 'fiNum', 'fiNumSub', 'fiProg', 'fiProgSub', 'fiWhen', 'fiWhenSub', 'fiVerdict', 'fiBar', 'glList', 'cmList', 'rkVerdict', 'rkProfile', 'rkProfileSub', 'rkVar', 'rkVarSub', 'rkDiv', 'rkDivSub', 'rkBars', 'rkLegend', 'rkRiskNote', 'rkStress', 'rkScore', 'cpList', 'cpUninsured', 'cpUninsuredSub', 'cpTop', 'cpTopSub', 'cpNote', 'fInst', 'instList', 'xpCountry', 'xpCurrency', 'xpCountryNote', 'xpSpend', 'xpNote', 'retTable', 'retAll', 'retAllSub', 'retFunds', 'retFundsSub', 'retNote', 'efList', 'efCalc', 'asName', 'asAmt', 'asNote', 'efMonths', 'efUnit', 'efSub', 'efAll', 'efBar', 'efVerdict', 'efFundInfo', 'efPickList', 'eName', 'eAmt', 'eOwner', 'eNote', 'tidyList', 'fxList', 'fxText', 'acctList', 'ownerList', 'fundList']
         .forEach(id => { const el = $(id); if (el.tagName === 'INPUT') el.value = ''; else el.textContent = ''; });
       return;
     }
@@ -1241,6 +1242,7 @@
     $('tidyBtn').hidden = !items.some(i => i.kind === 'asset');
     renderFxNote(vis);
     showView();
+    recordLocalSnapshot(); renderHistory();
     renderMix(); renderLookThrough(); renderRisk(); renderExposure(); renderCounterparty(); renderReturns(); renderEmergency(); renderProjection(); renderList('asset'); renderList('debt'); renderDebtPlan();
   }
 
@@ -1835,11 +1837,11 @@
 
   // ---- view switching (Overview | Scenarios) ----
   function showView() {
-    const sc = location.hash === '#scenarios' && mode !== 'locked';
-    $('content').hidden = mode === 'locked' || sc; $('scView').hidden = !sc;
-    $('tabOverview').classList.toggle('on', !sc); $('tabScen').classList.toggle('on', sc);
-    $('tabOverview').setAttribute('aria-current', sc ? 'false' : 'page'); $('tabScen').setAttribute('aria-current', sc ? 'page' : 'false');
+    const sc = location.hash === '#scenarios' && mode !== 'locked', pl = location.hash === '#plan' && mode !== 'locked';
+    $('content').hidden = mode === 'locked' || sc || pl; $('scView').hidden = !sc; $('plView').hidden = !pl;
+    for (const [id, on] of [['tabOverview', !sc && !pl], ['tabScen', sc], ['tabPlan', pl]]) { $(id).classList.toggle('on', on); $(id).setAttribute('aria-current', on ? 'page' : 'false'); }
     if (sc) renderScenarios();
+    if (pl) renderPlan();
   }
   window.addEventListener('hashchange', showView);
 
@@ -2430,6 +2432,494 @@
     $('scTabs').scrollIntoView({ behavior: 'smooth', block: 'start' });
     showBanner('Added “After my moves” as a scenario. Save it to keep it.', 'info');
   };
+
+  // ---------- Plan: target allocation & rebalancing ----------
+  // A written policy: a target % per bucket (of investable assets: everything except property, unless included, and
+  // except a cash reserve of N months of spending plus set-asides), with a tolerance band. When any bucket leaves its
+  // band, the plan trades back to target (or fixes only the breaches). Trades are turned into holding-level moves:
+  // low-yield excess cash and liquid holdings first; retirement-account holdings become "switch inside the account";
+  // bucket shortfalls go to your largest existing holding in that bucket, else a new position.
+  const POL = prefs.policy = Object.assign({ targets: null, band: 5, reserve: 6, prop: false, breach: false }, prefs.policy || {});
+  const spendNow = () => { const ex = expView().filter(e => e.monthly !== null); return { ess: ex.filter(e => e.essential).reduce((a, e) => a + e.monthly, 0), all: ex.reduce((a, e) => a + e.monthly, 0) }; };
+  const asideTotal = () => asides.reduce((t, a) => t + (a.amount === null ? 0 : (conv(a.amount, a.currency) || 0)), 0);
+  function polBase() {
+    const vis = visible(), by = bucketValues(vis), sp = spendNow();
+    const reserve = (Number(POL.reserve) || 0) * (sp.ess || sp.all) + asideTotal();
+    const keep = Math.min(by.Cash, reserve);
+    const inc = BUCKETS.filter(b => POL.prop || b !== 'Property');
+    const cur = Object.fromEntries(inc.map(b => [b, b === 'Cash' ? by.Cash - keep : by[b]]));
+    const T = inc.reduce((a, b) => a + cur[b], 0);
+    return { vis, by, inc, cur, T, reserve, keep, spendSet: !!(sp.ess || sp.all) };
+  }
+  function roundTo100(o) {
+    const r = Object.fromEntries(Object.entries(o).map(([k, v]) => [k, Math.round(v)]));
+    const d = 100 - Object.values(r).reduce((a, b) => a + b, 0), big = Object.keys(r).sort((a, b) => o[b] - o[a])[0];
+    if (big && d) r[big] += d; return r;
+  }
+  const polCurrent = B => B.T ? roundTo100(Object.fromEntries(B.inc.map(b => [b, B.cur[b] / B.T * 100]))) : Object.fromEntries(B.inc.map(b => [b, 0]));
+  const polTargets = B => { const t = POL.targets; return t ? Object.fromEntries(B.inc.map(b => [b, Math.max(0, Number(t[b]) || 0)])) : polCurrent(B); };
+  function polTrades(B, tg) {
+    const T = B.T, band = Math.max(0, Number(POL.band) || 0);
+    const rows = B.inc.map(b => { const now = T ? B.cur[b] / T * 100 : 0, t = tg[b] || 0, want = t / 100 * T; return { b, now, t, drift: now - t, out: Math.abs(now - t) > band + 1e-9, cur: B.cur[b], want, trade: 0 }; });
+    const anyOut = rows.some(r => r.out);
+    if (anyOut && !POL.breach) rows.forEach(r => { r.trade = r.want - r.cur; });
+    else if (anyOut) {
+      rows.forEach(r => { r.trade = r.out ? r.want - r.cur : 0; });
+      let gap = -rows.reduce((a, r) => a + r.trade, 0);           // >0: money freed to place; <0: money needed
+      const cash = rows.find(r => r.b === 'Cash' && !r.out);
+      if (cash) { const take = gap < 0 ? Math.max(gap, -cash.cur) : gap; cash.trade += take; gap -= take; }
+      if (Math.abs(gap) > 0.5) { const pool = rows.filter(r => !r.out && r.b !== 'Cash'), tot = pool.reduce((a, r) => a + r.cur, 0); pool.forEach(r => { r.trade += tot ? gap * r.cur / tot : 0; }); }
+    }
+    return { rows, anyOut };
+  }
+  function polMoves(B, rows) {
+    const assets = B.vis.filter(i => i.kind === 'asset' && i.value > 0 && !i.noFx);
+    const left = Object.fromEntries(assets.map(i => [i.id, i.value]));
+    let cashFree = Math.max(0, assets.filter(i => mainBucket(i) === 'Cash').reduce((a, i) => a + i.value, 0) - B.reserve);
+    const sources = [], unfilled = [];
+    for (const r of rows.filter(r => r.trade < -0.5)) {
+      let need = -r.trade;
+      const cands = assets.filter(i => mainBucket(i) === r.b).sort((a, b) => {
+        const la = liquidityOf(a) === 'liquid' ? 0 : 1, lb = liquidityOf(b) === 'liquid' ? 0 : 1; if (la !== lb) return la - lb;
+        return r.b === 'Cash' ? fwdOf(a) - fwdOf(b) : b.value - a.value;
+      });
+      for (const i of cands) {
+        if (need < 0.5) break;
+        let amt = Math.min(need, left[i.id]); if (r.b === 'Cash') amt = Math.min(amt, cashFree);
+        if (amt < 0.5) continue;
+        left[i.id] -= amt; need -= amt; if (r.b === 'Cash') cashFree -= amt;
+        sources.push({ i, amt, bucket: r.b, locked: liquidityOf(i) === 'locked' });
+      }
+      if (need >= 0.5) unfilled.push({ b: r.b, amt: need, dir: 'sell' });
+    }
+    const buys = rows.filter(r => r.trade > 0.5).map(r => {
+      const pool = assets.filter(i => mainBucket(i) === r.b && liquidityOf(i) === 'liquid');
+      const dest = r.b === 'Cash' ? pool.sort((a, b) => fwdOf(b) - fwdOf(a))[0] : pool.sort((a, b) => b.value - a.value)[0];
+      return { b: r.b, amt: r.trade, dest };
+    });
+    const moves = [];
+    sources.sort((a, b) => a.locked - b.locked);
+    for (const s of sources) {
+      let amt = s.amt;
+      for (const y of buys) {
+        if (amt < 0.5) break; if (y.amt < 0.5) continue;
+        const a = Math.min(amt, y.amt); amt -= a; y.amt -= a;
+        const to = s.locked || !y.dest ? 'b:' + y.b : y.dest.id;
+        const prev = moves.find(m => m.from === s.i.id && m.to === to);
+        if (prev) prev.amount += a; else moves.push({ from: s.i.id, to, amount: a, fromName: s.i.name, toName: to.startsWith('b:') ? `new ${y.b.toLowerCase()} position` : y.dest.name, bucket: y.b, fromBucket: s.bucket, locked: s.locked, taxable: !s.locked && s.bucket !== 'Cash' });
+      }
+    }
+    for (const y of buys) if (y.amt >= 0.5) unfilled.push({ b: y.b, amt: y.amt, dir: 'buy' });
+    return { moves, unfilled };
+  }
+  function renderTargets() {
+    const B = polBase(), sec = $('taSection');
+    if (!B.T) { sec.hidden = true; return; } sec.hidden = false;
+    const tg = polTargets(B), sum = B.inc.reduce((a, b) => a + (tg[b] || 0), 0), ok = Math.abs(sum - 100) < 0.05;
+    $('taBand').value = POL.band; $('taReserve').value = POL.reserve; $('taProp').checked = !!POL.prop; $('taBreach').checked = !!POL.breach;
+    $('taBase').textContent = `Targets apply to ${fmt(B.T)}: your assets${POL.prop ? '' : ` except property (${fmt(B.by.Property)})`}` +
+      (B.keep > 0.5 ? ` and your ${fmt(B.keep)} cash reserve (${POL.reserve} months of ${B.spendSet ? 'spending' : 'spending (add expenses to set this)'}${asideTotal() > 0.5 ? ' plus set-asides' : ''})` : '') + '.' +
+      (POL.targets ? '' : ' Targets start at your current mix: change them to your policy, or pick a starting point.');
+    const { rows, anyOut } = ok ? polTrades(B, tg) : { rows: B.inc.map(b => ({ b, now: B.cur[b] / B.T * 100, t: tg[b] || 0, drift: B.cur[b] / B.T * 100 - (tg[b] || 0), out: false, cur: B.cur[b], trade: 0 })), anyOut: false };
+    const tbl = $('taTable'); tbl.textContent = '';
+    const hr = document.createElement('tr'); ['Asset class', 'Target %', 'Now', 'Drift', 'Status', 'Trade'].forEach(t => { const th = document.createElement('th'); th.textContent = t; hr.append(th); });
+    const th = document.createElement('thead'); th.append(hr); tbl.append(th);
+    const tb = document.createElement('tbody'), band = Math.max(0, Number(POL.band) || 0), span = Math.max(band * 3, ...rows.map(r => Math.abs(r.drift)), 1);
+    for (const r of rows) {
+      const tr = document.createElement('tr');
+      const n = document.createElement('td'); const dot = document.createElement('i'); dot.className = 'sc-dot bk-' + BUCKETS.indexOf(r.b); n.append(dot, r.b); tr.append(n);
+      const ti = document.createElement('td'); const inp = document.createElement('input'); inp.type = 'number'; inp.min = '0'; inp.max = '100'; inp.step = '1'; inp.value = tg[r.b] || 0; inp.setAttribute('aria-label', `${r.b} target %`);
+      inp.onchange = () => { const v = Math.max(0, Math.min(100, Number(inp.value) || 0)); POL.targets = { ...tg, [r.b]: v }; savePrefs(); renderPlan(); };
+      ti.append(inp); tr.append(ti);
+      const nw = document.createElement('td'); nw.textContent = `${r.now.toFixed(1)}% · ${fmtShort(r.cur)}`; tr.append(nw);
+      const dr = document.createElement('td'); const g = document.createElement('span'); g.className = 'ta-drift';
+      const sh = document.createElement('s'); sh.style.left = (50 - band / span * 50) + '%'; sh.style.width = (band / span * 100) + '%'; g.append(sh);
+      const z = document.createElement('b'); z.style.left = '50%'; g.append(z);
+      const bar = document.createElement('i'); const wpx = Math.abs(r.drift) / span * 50; bar.style.left = (r.drift < 0 ? 50 - wpx : 50) + '%'; bar.style.width = wpx + '%'; if (r.out) bar.className = 'out'; g.append(bar);
+      dr.append(g, document.createTextNode((r.drift > 0 ? '+' : r.drift < 0 ? '−' : '') + Math.abs(r.drift).toFixed(1) + ' pts')); tr.append(dr);
+      const stc = document.createElement('td'); stc.className = 'ta-st ' + (r.out ? 'rk-warning' : 'rk-good');
+      const ic = document.createElement('span'); ic.className = 'rk-ico'; ic.textContent = r.out ? '!' : '✓'; ic.setAttribute('aria-hidden', 'true');
+      stc.append(ic, ok ? (r.out ? (r.drift > 0 ? 'Over band' : 'Under band') : 'In band') : '—'); tr.append(stc);
+      const trd = document.createElement('td'); trd.textContent = Math.abs(r.trade) < 0.5 ? '—' : (r.trade > 0 ? 'Buy ' : 'Sell ') + fmt(Math.abs(r.trade)); tr.append(trd);
+      tb.append(tr);
+    }
+    const sr = document.createElement('tr'); sr.className = 'sc-sum';
+    ['Total', (Math.round(sum * 10) / 10) + '%', '100% · ' + fmtShort(B.T), '', '', ''].forEach(t => { const td = document.createElement('td'); td.textContent = t; sr.append(td); });
+    tb.append(sr); tbl.append(tb);
+    const plan = $('taPlan'); plan.textContent = '';
+    const out = rows.filter(r => r.out).length;
+    $('taSum').textContent = !ok ? `Targets add up to ${Math.round(sum * 10) / 10}%. Make them add up to 100% to get a plan.` : anyOut ? `${out} of ${rows.length} asset classes are outside the ±${band}-point band.` : `Everything is within ±${band} points of target. No trades needed.`;
+    $('taSum').classList.toggle('warn-text', !ok);
+    $('taLoad').hidden = true; $('taRisk').textContent = '';
+    if (!ok || !anyOut) { const e = document.createElement('div'); e.className = 'mv-empty'; e.textContent = !ok ? 'Fix the targets first.' : 'Nothing to do. Check again after big market moves or when you add money.'; plan.append(e); return; }
+    const { moves, unfilled } = polMoves(B, rows);
+    const list = document.createElement('div'); list.className = 'ta-plan';
+    for (const m of moves) {
+      const row = document.createElement('div'); row.className = 'ta-move';
+      const a = document.createElement('span'); a.className = 'amt'; a.textContent = fmt(m.amount);
+      const d = document.createElement('span'); d.textContent = m.locked ? `Inside ${m.fromName}: switch from ${m.fromBucket.toLowerCase()} to ${m.bucket.toLowerCase()}` : `${m.fromName} → ${m.toName}`;
+      const note = m.locked ? 'Retirement account: switch funds within the plan (no tax on the switch in a 401(k)/IRA).' : m.taxable ? 'Selling in a taxable account can realise capital gains; check your cost basis first.' : m.fromBucket === 'Cash' ? 'Excess cash above your reserve, lowest-yielding first.' : '';
+      if (note) { const sm = document.createElement('small'); sm.textContent = note; d.append(sm); }
+      row.append(a, d); list.append(row);
+    }
+    for (const u of unfilled) {
+      const row = document.createElement('div'); row.className = 'ta-move';
+      const a = document.createElement('span'); a.className = 'amt'; a.textContent = fmt(u.amt);
+      const d = document.createElement('span'); d.textContent = u.dir === 'sell' ? `Couldn’t find a holding to trim for ${u.b.toLowerCase()}` : `Nothing left to fund ${u.b.toLowerCase()}`;
+      const sm = document.createElement('small'); sm.textContent = u.dir === 'sell' ? 'It’s held inside multi-asset funds or your cash reserve. Adjust those funds, or loosen this target.' : 'Sells fell short (see above).'; d.append(sm);
+      row.append(a, d); list.append(row);
+    }
+    plan.append(list);
+    // contributions-only alternative
+    const monthly = B.vis.filter(i => i.kind === 'asset').reduce((a, i) => a + (Number(i.monthly) || 0), 0);
+    const under = rows.filter(r => r.trade > 0.5), need = under.reduce((a, r) => a + r.trade, 0);
+    if (monthly > 0 && need > 0) {
+      const mo = need / monthly, p = document.createElement('p'); p.className = 'hint';
+      p.textContent = `Or without selling: send all ${fmt(monthly)}/month of contributions to ${under.map(r => r.b.toLowerCase()).join(' and ')}. That closes the gap in about ${mo < 1 ? 'a month' : mo < 24 ? Math.ceil(mo) + ' months' : Math.round(mo / 12) + ' years'} if markets stand still${mo <= 12 ? ', usually the better route since nothing is sold' : ''}.`;
+      plan.append(p);
+    }
+    const D = B.vis.filter(i => i.kind === 'debt' && i.value > 0 && !i.noFx).reduce((a, i) => a + i.value, 0);
+    const after = { ...B.by }; for (const r of rows) after[r.b] += r.trade;
+    const m0 = riskModel(B.by, D), m1 = riskModel(after, D);
+    if (m0 && m1 && m0.volNW !== null && m1.volNW !== null) $('taRisk').textContent = `After the plan: net-worth volatility ${(m0.volNW * 100).toFixed(1)}% → ${(m1.volNW * 100).toFixed(1)}%, diversification ${m0.bets.toFixed(1)} → ${m1.bets.toFixed(1)} bets, expected return ${(m0.mu * 100).toFixed(1)}% → ${(m1.mu * 100).toFixed(1)}% on assets. Turnover ${fmt(moves.reduce((a, m) => a + m.amount, 0))}.`;
+    $('taLoad').hidden = !moves.length;
+    $('taLoad').onclick = () => { MV.splice(0, MV.length, ...moves.map(m => ({ from: m.from, to: m.to, amount: Math.round(m.amount) }))); savePrefs(); location.hash = '#scenarios'; window.scrollTo(0, 0); };
+    $('taNote').textContent = 'Bands are absolute percentage points. Trades use today’s values and ignore taxes and costs. Moves into an existing holding go to your largest one in that asset class; retirement-account changes are shown as switches inside the account. Your policy is saved in this browser.';
+  }
+  $('taPreset').onchange = () => {
+    const k = $('taPreset').value; if (!k) return;
+    const B = polBase();
+    POL.targets = k === 'current' ? polCurrent(B) : Object.fromEntries(BUCKETS.map(b => [b, (SC_PRESETS[k].alloc || {})[b] || 0]));
+    $('taPreset').value = ''; savePrefs(); renderPlan();
+  };
+  $('taBand').onchange = () => { POL.band = clampNum($('taBand').value, 1, 25, 5); savePrefs(); renderPlan(); };
+  $('taReserve').onchange = () => { POL.reserve = clampNum($('taReserve').value, 0, 60, 6); savePrefs(); renderPlan(); };
+  $('taProp').onchange = () => { POL.prop = $('taProp').checked; savePrefs(); renderPlan(); };
+  $('taBreach').onchange = () => { POL.breach = $('taBreach').checked; savePrefs(); renderPlan(); };
+
+  // ---------- Plan: financial independence ----------
+  // FI number = yearly spending ÷ safe withdrawal rate. Counts investments and cash (and property if you choose), less
+  // debts not secured on property you've excluded. Projection is in today's money: expected real return from each
+  // holding's expected return less inflation, volatility from the risk model, contributions growing with inflation.
+  const FI = prefs.fi = Object.assign({ age: null, target: null, spend: null, wr: 4, prop: false }, prefs.fi || {});
+  function gauss(rnd) { let u = 0; while (!u) u = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rnd()); }
+  function fiSim(W, C, num, mu, vol, months, paths, seed) {
+    const rnd = mulberry(seed), s = vol / Math.sqrt(12), m = Math.log(1 + mu) / 12 - s * s / 2, hit = [];
+    for (let p = 0; p < paths; p++) {
+      let w = W, k = 0;
+      if (w >= num) { hit.push(0); continue; }
+      for (k = 1; k <= months; k++) { w = w * Math.exp(m + s * gauss(rnd)) + C; if (w >= num) break; }
+      hit.push(k <= months ? k : Infinity);
+    }
+    return hit.sort((a, b) => a - b);
+  }
+  function fiCalc() {
+    const vis = visible(), assets = vis.filter(i => i.kind === 'asset' && i.value > 0 && !i.noFx);
+    const directProp = i => mainBucket(i) === 'Property' && !i.ticker;
+    const incl = assets.filter(i => !['Vehicles', 'Collectibles'].includes(i.category) && (FI.prop || !directProp(i)));
+    const debts = vis.filter(i => i.kind === 'debt' && i.value > 0 && !i.noFx && (FI.prop || !/mortgage/i.test(i.category + ' ' + i.name)));
+    const W = incl.reduce((a, i) => a + i.value, 0) - debts.reduce((a, i) => a + i.value, 0);
+    const sp = spendNow(), spend = FI.spend !== null && FI.spend !== undefined && FI.spend !== '' ? Number(FI.spend) : sp.all * 12;
+    const wr = clampNum(FI.wr, 2, 8, 4), num = spend > 0 ? spend / (wr / 100) : null;
+    const V = incl.reduce((a, i) => a + i.value, 0), nom = V ? incl.reduce((a, i) => a + i.value * fwdOf(i), 0) / V / 100 : 0;
+    const real = (1 + nom) / (1 + (Number(P.infl) || 0) / 100) - 1;
+    const by = Object.fromEntries(BUCKETS.map(b => [b, 0])); for (const i of incl) for (const [c, w] of Object.entries(mixFor(i))) by[bucketOf(c)] += i.value * w / 100;
+    const M = riskModel(by, 0), vol = M ? M.vol : 0.1;
+    const C = incl.reduce((a, i) => a + (Number(i.monthly) || 0), 0);
+    return { W, spend, wr, num, real, nom, vol, C, V, excludedProp: assets.filter(directProp).reduce((a, i) => a + i.value, 0) };
+  }
+  function renderFI() {
+    const F = fiCalc();
+    $('fiAge').value = FI.age ?? ''; $('fiTarget').value = FI.target ?? ''; $('fiWR').value = F.wr;
+    $('fiSpend').value = FI.spend ?? ''; const fromExp = F.spend > 0 && (FI.spend === null || FI.spend === undefined || FI.spend === ''); $('fiSpend').placeholder = fromExp ? String(Math.round(F.spend)) : 'Type'; $('fiSpend').title = fromExp ? 'From your expenses × 12; type to override' : 'Yearly spending';
+    $('fiProp').checked = !!FI.prop;
+    const bar = $('fiBar'); bar.textContent = '';
+    if (!F.num) {
+      $('fiNum').textContent = '—'; $('fiNumSub').textContent = 'Enter yearly spending, or add your monthly expenses on the overview.';
+      ['fiProg', 'fiProgSub', 'fiWhen', 'fiWhenSub', 'fiVerdict'].forEach(id => { $(id).textContent = ''; }); $('fiNote').textContent = ''; return;
+    }
+    $('fiNum').textContent = fmt(F.num);
+    $('fiNumSub').textContent = `${fmt(F.spend)} a year ÷ ${F.wr}% withdrawal rate.`;
+    const prog = Math.max(0, F.W / F.num);
+    $('fiProg').textContent = Math.round(prog * 100) + '%';
+    $('fiProgSub').textContent = `${fmt(Math.max(0, F.W))} counted${F.excludedProp > 0.5 && !FI.prop ? ', not your property' : ''}. Adding ${fmt(F.C)}/month.`;
+    const f = document.createElement('div'); f.style.width = Math.min(100, prog * 100) + '%'; bar.append(f);
+    const age = Number(FI.age) || null, tgt = Number(FI.target) || null;
+    const horizon = Math.max(1, Math.min(80, age ? 100 - age : 60)) * 12;
+    const hit = fiSim(Math.max(0, F.W), F.C, F.num, F.real, F.vol, horizon, 600, 4242);
+    const med = hit[Math.floor(hit.length / 2)];
+    const yrsTxt = mo => mo === 0 ? 'now' : mo < 12 ? 'within a year' : `in ${Math.round(mo / 12)} years`;
+    if (prog >= 1) { $('fiWhen').textContent = 'Now'; $('fiWhenSub').textContent = 'Your counted assets already cover your spending at this withdrawal rate.'; }
+    else if (!Number.isFinite(med)) { $('fiWhen').textContent = 'Not on track'; $('fiWhenSub').textContent = `Fewer than half of 600 simulated markets get there within ${Math.round(horizon / 12)} years at your current saving.`; }
+    else { const yr = new Date().getFullYear() + Math.round(med / 12); $('fiWhen').textContent = age ? `Age ${Math.round(age + med / 12)}` : String(yr); $('fiWhenSub').textContent = `Median of 600 simulated markets: ${yrsTxt(med)} (${yr}). A 1-in-4 bad run: ${Number.isFinite(hit[Math.floor(hit.length * 0.75)]) ? (age ? 'age ' + Math.round(age + hit[Math.floor(hit.length * 0.75)] / 12) : 'in ' + Math.round(hit[Math.floor(hit.length * 0.75)] / 12) + ' years') : 'not within the horizon'}.`; }
+    let verdict = '';
+    if (age && tgt && tgt > age && prog < 1) {
+      const mo = (tgt - age) * 12, pr = hit.filter(h => h <= mo).length / hit.length;
+      verdict = `${Math.round(pr * 100)}% chance of reaching it by your target age of ${tgt}.`;
+      if (pr < 0.75) {
+        let lo = F.C, hi = F.C + F.num / mo * 2;
+        for (let k = 0; k < 22; k++) { const mid = (lo + hi) / 2; const h = fiSim(Math.max(0, F.W), mid, F.num, F.real, F.vol, mo, 300, 99); if (h.filter(x => x <= mo).length / h.length >= 0.75) hi = mid; else lo = mid; }
+        verdict += ` To make that 75%, save about ${fmt(Math.ceil(hi / 10) * 10)}/month (now ${fmt(F.C)}), spend less, or push the date back.`;
+      } else verdict += ' You’re on course.';
+    } else if (!age) verdict = 'Add your age and a target age to see your chances of getting there in time.';
+    $('fiVerdict').textContent = verdict;
+    $('fiNote').textContent = `In today’s money. Expected return ${(F.nom * 100).toFixed(1)}% (each holding’s expected return, or the Scenarios assumption for its asset class), less ${P.infl}% inflation = ${(F.real * 100).toFixed(1)}% real, with ${(F.vol * 100).toFixed(1)}% volatility. Contributions are assumed to rise with inflation. The 4% rule comes from US history over 30-year retirements; for an early retirement many planners use 3–3.5%. Excludes pensions and Social Security. Saved in this browser.`;
+  }
+  const fiNum = (id, k, lo, hi) => { $(id).onchange = () => { const v = $(id).value; FI[k] = v === '' ? null : clampNum(v, lo, hi, null); savePrefs(); renderFI(); }; };
+  fiNum('fiAge', 'age', 16, 100); fiNum('fiTarget', 'target', 17, 100); fiNum('fiSpend', 'spend', 0, 1e9); fiNum('fiWR', 'wr', 2, 8);
+  $('fiProp').onchange = () => { FI.prop = $('fiProp').checked; savePrefs(); renderFI(); };
+
+  // ---------- Plan: goals ----------
+  const GL = prefs.goals = Array.isArray(prefs.goals) ? prefs.goals.filter(g => g && typeof g === 'object').slice(0, 30) : [];
+  function goalCalc(g) {
+    const vis = visible();
+    let cur = 0, rate = SC_DEFAULTS.Cash[0], src = '';
+    if (typeof g.fund === 'string' && g.fund.startsWith('aside:')) { const a = asides.find(x => x.id === g.fund.slice(6)); if (a) { cur = a.amount === null ? 0 : (conv(a.amount, a.currency) || 0); src = 'set-aside'; } }
+    else if (g.fund) { const i = vis.find(x => x.id === g.fund); if (i) { cur = i.value; rate = fwdOf(i); src = 'holding'; } }
+    const target = Math.max(0, Number(g.target) || 0), monthly = Math.max(0, Number(g.monthly) || 0);
+    const m = /^(\d{4})-(\d{2})$/.exec(g.date || ''), now = new Date();
+    const n = m ? (Number(m[1]) - now.getFullYear()) * 12 + (Number(m[2]) - 1 - now.getMonth()) : null;
+    const rm = Math.pow(1 + rate / 100, 1 / 12) - 1;
+    const fv = n === null || n < 0 ? cur : cur * Math.pow(1 + rm, n) + (rm ? monthly * (Math.pow(1 + rm, n) - 1) / rm : monthly * n);
+    const need = n > 0 ? Math.max(0, (target - cur * Math.pow(1 + rm, n)) * (rm ? rm / (Math.pow(1 + rm, n) - 1) : 1 / n)) : null;
+    return { cur, rate, target, monthly, n, fv, need, src };
+  }
+  function goalOut(g, box) {
+    const c = goalCalc(g); box.textContent = '';
+    const txt = document.createElement('span'), right = document.createElement('span');
+    if (!c.target) txt.textContent = 'Enter a target amount.';
+    else if (c.cur >= c.target) { txt.textContent = `Funded: ${fmt(c.cur)} of ${fmt(c.target)}.`; right.textContent = '✓ Funded'; }
+    else if (c.n === null) txt.textContent = `${fmt(c.cur)} of ${fmt(c.target)} so far. Add a date to see if you’re on track.`;
+    else if (c.n < 0) txt.textContent = 'The target date has passed.';
+    else {
+      const on = c.fv >= c.target - 0.5;
+      txt.append(`${fmt(c.cur)} now → `); const b = document.createElement('b'); b.textContent = fmt(c.fv); txt.append(b, ` projected by the date (${c.rate.toFixed(1)}%/yr on ${c.src || 'nothing linked yet'}${c.monthly ? ` + ${fmt(c.monthly)}/month` : ''}).`);
+      if (!on) txt.append(` Save about ${fmt(Math.ceil(c.need / 10) * 10)}/month to reach ${fmt(c.target)}.`);
+      right.textContent = on ? '✓ On track' : `Short ${fmt(c.target - c.fv)}`; right.className = on ? 'rk-pos' : 'warn-text';
+    }
+    const bar = document.createElement('div'); bar.className = 'bar'; const f = document.createElement('div'); f.style.width = (c.target ? Math.min(100, c.cur / c.target * 100) : 0) + '%'; bar.append(f);
+    box.append(txt, right, bar);
+  }
+  function renderGoals() {
+    const list = $('glList');
+    if (list.contains(document.activeElement) && document.activeElement.tagName === 'INPUT') { [...list.querySelectorAll('.gl-out')].forEach((b, k) => GL[k] && goalOut(GL[k], b)); return; }
+    list.textContent = '';
+    if (!GL.length) { const e = document.createElement('div'); e.className = 'mv-empty'; e.textContent = 'Add a goal, like a house deposit or business capital, and link it to a set-aside or a holding to track it.'; list.append(e); }
+    else { const h = document.createElement('div'); h.className = 'gl-head'; ['Goal', 'Target', 'By', 'Funded from', 'Saving / month', ''].forEach(t => { const s = document.createElement('span'); s.textContent = t; h.append(s); }); list.append(h); }
+    const vis = visible().filter(i => i.kind === 'asset' && i.value > 0);
+    GL.forEach((g, k) => {
+      const row = document.createElement('div'); row.className = 'gl-row';
+      const mk = (cls, type, val, ph, label, on) => { const i = document.createElement('input'); i.className = cls; i.type = type; i.value = val ?? ''; if (ph) i.placeholder = ph; i.setAttribute('aria-label', label); i.oninput = () => { on(i.value); savePrefs(); goalOut(g, out); }; return i; };
+      const name = mk('gl-name', 'text', g.name, 'e.g. House deposit', `Goal ${k + 1} name`, v => { g.name = v.slice(0, 60); }); name.maxLength = 60;
+      const tgt = mk('gl-tgt', 'number', g.target, 'Target', `Goal ${k + 1} target amount`, v => { g.target = Math.max(0, Number(v) || 0); }); tgt.min = '0';
+      const date = mk('gl-date', 'month', g.date, '', `Goal ${k + 1} target month`, v => { g.date = /^\d{4}-\d{2}$/.test(v) ? v : ''; });
+      const fund = document.createElement('select'); fund.className = 'gl-fund'; fund.setAttribute('aria-label', `Goal ${k + 1} funded from`);
+      const o0 = document.createElement('option'); o0.value = ''; o0.textContent = 'Not linked'; fund.append(o0);
+      if (asides.length) { const og = document.createElement('optgroup'); og.label = 'Set-asides'; for (const a of asides) { const o = document.createElement('option'); o.value = 'aside:' + a.id; o.textContent = a.name; og.append(o); } fund.append(og); }
+      const og2 = document.createElement('optgroup'); og2.label = 'Holdings'; for (const i of vis.sort((a, b) => b.value - a.value)) { const o = document.createElement('option'); o.value = i.id; o.textContent = `${i.name} · ${fmtShort(i.value)}`; og2.append(o); } fund.append(og2);
+      fund.value = [...fund.options].some(o => o.value === g.fund) ? g.fund : '';
+      fund.onchange = () => { g.fund = fund.value; savePrefs(); goalOut(g, out); };
+      const mon = mk('gl-mon', 'number', g.monthly || '', '0', `Goal ${k + 1} monthly saving`, v => { g.monthly = Math.max(0, Number(v) || 0); }); mon.min = '0';
+      const x = document.createElement('button'); x.type = 'button'; x.className = 'icon-btn gl-x'; x.textContent = '×'; x.setAttribute('aria-label', `Remove goal ${k + 1}`);
+      x.onclick = () => { GL.splice(k, 1); savePrefs(); renderGoals(); };
+      const out = document.createElement('div'); out.className = 'gl-out';
+      row.append(name, tgt, date, fund, mon, x, out); list.append(row); goalOut(g, out);
+    });
+    $('glNote').textContent = GL.length ? 'Growth uses the linked holding’s expected return (cash and set-asides 3%). Goals are saved in this browser.' : '';
+  }
+  $('glAdd').onclick = () => {
+    const d = new Date(); GL.push({ name: '', target: 0, date: `${d.getFullYear() + 3}-${String(d.getMonth() + 1).padStart(2, '0')}`, fund: asides[0] ? 'aside:' + asides[0].id : '', monthly: 0 });
+    savePrefs(); renderGoals(); const ins = $('glList').querySelectorAll('.gl-name'); if (ins.length) ins[ins.length - 1].focus();
+  };
+
+  // ---------- Plan: expat tax & reporting checks ----------
+  // Flags only, from the currencies, categories and names in your data. Thresholds are the published US figures
+  // (FBAR $10,000 aggregate; Form 8938 by filing status and residence, not indexed for inflation).
+  const TAX = prefs.tax = Object.assign({ us: '', live: 'yes', filing: 'single', uk: false, au: false }, prefs.tax || {});
+  const toUSD = i => { const r = rateOf(i.currency); return r ? i.native / r : null; };
+  const PENSION_RE = /super|kiwisaver|sipp|pension|aware|australiansuper|hostplus|unisuper|cbus|retire/i;
+  function taxChecks() {
+    const vis = visible(), out = [];
+    const nm = i => [i.name, i.category, i.accountType, i.institution, i.fund].join(' ');
+    const foreign = vis.filter(i => i.kind === 'asset' && i.native > 0 && i.currency !== 'USD' && !PRICED.includes(i.currency) && !(mainBucket(i) === 'Property' && !i.ticker) && !['Vehicles', 'Collectibles'].includes(i.category));
+    const fUSD = foreign.reduce((a, i) => a + (toUSD(i) || 0), 0), usd = v => fmtIn(v, 'USD');
+    const names = l => l.slice(0, 4).map(i => i.name).join(', ') + (l.length > 4 ? ` and ${l.length - 4} more` : '');
+    if (TAX.us === 'yes') {
+      out.push({ name: 'FBAR', status: fUSD > 10000 ? 'warning' : 'good',
+        find: foreign.length ? `Accounts in other currencies total about ${usd(fUSD)} (${names(foreign)}). ${fUSD > 10000 ? 'Over $10,000 combined at any point in the year means filing FinCEN Form 114.' : 'Under the $10,000 combined threshold right now.'}` : 'No accounts in other currencies.',
+        rule: 'Due April 15, automatic extension to October 15. Uses each account’s highest balance in the year; joint accounts count in full for each owner. Missing it carries steep penalties.' });
+      const abroad = TAX.live === 'no', joint = TAX.filing === 'joint';
+      const [ye, any] = abroad ? (joint ? [400000, 600000] : [200000, 300000]) : (joint ? [100000, 150000] : [50000, 75000]);
+      out.push({ name: 'Form 8938 (FATCA)', status: fUSD > ye ? 'warning' : fUSD > ye * 0.8 ? 'warning' : 'good',
+        find: `About ${usd(fUSD)} of foreign financial assets vs your threshold of ${usd(ye)} at year end or ${usd(any)} at any time (${abroad ? 'living abroad' : 'living in the US'}, ${joint ? 'married filing jointly' : 'single'}).${fUSD > ye ? ' Likely required with your tax return.' : fUSD > ye * 0.8 ? ' Close to the threshold.' : ''}`,
+        rule: 'Filed with your Form 1040. Foreign pensions and superannuation usually count. Separate from the FBAR: you may need both.' });
+      const pfic = foreign.filter(i => !PENSION_RE.test(nm(i)) && mainBucket(i) !== 'Cash' && i.category !== 'Retirement');
+      out.push({ name: 'Foreign funds (PFIC)', status: pfic.length ? 'serious' : 'good',
+        find: pfic.length ? `Possible PFICs: ${names(pfic)}.` : 'No non-US funds outside pensions found.',
+        rule: 'Non-US mutual funds and ETFs are usually PFICs for US taxpayers: punitive tax plus interest on gains unless you make a QEF or mark-to-market election, and Form 8621 every year. Many expats hold US-domiciled funds instead.' });
+      const pens = foreign.filter(i => PENSION_RE.test(nm(i)) || i.category === 'Retirement');
+      if (pens.length) {
+        const au = pens.filter(i => i.currency === 'AUD');
+        out.push({ name: 'Foreign pensions', status: au.length ? 'warning' : 'info',
+          find: `${names(pens)}.${au.length ? ' The US tax treatment of Australian super is unsettled: it may be treated as a foreign pension or as a foreign trust, and employer contributions and earnings can be taxable in the US.' : ''}`,
+          rule: au.length ? 'Get a cross-border specialist’s view on super (possible Forms 3520/3520-A as well as 8938). The US–UK treaty, by contrast, generally defers US tax on UK pension growth.' : 'Treaty treatment varies by country; the US–UK treaty generally defers US tax on UK pension growth. Report on Form 8938 if over the threshold.' });
+      }
+      const fm = vis.filter(i => i.kind === 'debt' && i.native > 0 && i.currency !== 'USD' && /mortgage|home loan/i.test(nm(i)));
+      if (fm.length) out.push({ name: 'Foreign-currency mortgage', status: 'warning',
+        find: `${names(fm)}: repaying it after that currency has fallen against the dollar can create a taxable US exchange gain.`,
+        rule: 'Losses on a loan for a home you live in usually aren’t deductible, so this is one-sided. Keep the loan’s US-dollar value when you took it out and at each repayment.' });
+      const fp = vis.filter(i => i.kind === 'asset' && i.native > 0 && i.currency !== 'USD' && mainBucket(i) === 'Property' && !i.ticker);
+      if (fp.length) out.push({ name: 'Foreign property', status: 'info',
+        find: `${names(fp)}: rent is reportable on your US return, with a foreign tax credit for tax paid abroad.`,
+        rule: 'US depreciation rules apply (30-year straight line for foreign residential rentals). A sale is taxed in US dollars, so currency moves change the gain.' });
+      const fl = vis.filter(i => i.kind === 'debt' && i.native > 0 && i.currency !== 'USD' && (i.writeOff || /student/i.test(nm(i))));
+      if (fl.length) out.push({ name: 'Foreign loan write-off', status: 'warning',
+        find: `${names(fl)}${fl.some(i => i.writeOff) ? ` (written off ${fl.filter(i => i.writeOff).map(i => i.writeOff).join(', ')})` : ''}: a forgiven balance can count as taxable cancellation-of-debt income in the US that year.`,
+        rule: 'US exclusions for forgiven student loans may not cover foreign loans. Plan for the tax in that year, or check whether insolvency or other exceptions apply.' });
+    }
+    if (TAX.uk) {
+      const nonRep = vis.filter(i => i.kind === 'asset' && i.ticker && i.currency !== 'GBP' && mainBucket(i) !== 'Cash');
+      out.push({ name: 'UK: offshore funds', status: nonRep.length ? 'warning' : 'good',
+        find: nonRep.length ? `Non-UK funds: ${names(nonRep)}. Check each one has UK “reporting fund” status.` : 'No non-UK funds found.',
+        rule: 'Gains on offshore funds without reporting status are taxed as income, not capital gains. Many US-domiciled ETFs aren’t reporting funds.' });
+    }
+    if (TAX.au) out.push({ name: 'Australia: worldwide income', status: 'info',
+      find: 'Australian residents are taxed on worldwide income and gains, including US fund distributions and sales.',
+      rule: 'US tax withheld goes on your Australian return as a foreign income tax offset. Currency moves are part of the capital gain in Australian dollars.' });
+    if (!out.length) out.push({ name: TAX.us === '' ? 'Choose your situation' : 'No checks', status: 'info', find: TAX.us === '' ? 'Set whether you’re a US taxpayer (and any UK or Australian residency) above to see the checks that apply.' : 'Nothing to flag for your selection.', rule: '' });
+    return out;
+  }
+  function renderTax() {
+    $('cmUS').value = TAX.us; $('cmLive').value = TAX.live; $('cmFiling').value = TAX.filing; $('cmUK').checked = !!TAX.uk; $('cmAU').checked = !!TAX.au;
+    $('cmLive').disabled = $('cmFiling').disabled = TAX.us !== 'yes';
+    const box = $('cmList'); box.textContent = '';
+    for (const c of taxChecks()) {
+      const row = document.createElement('div'); row.className = 'rk-item rk-' + c.status;
+      const ic = document.createElement('span'); ic.className = 'rk-ico'; ic.textContent = RK_ICON[c.status]; ic.setAttribute('aria-hidden', 'true');
+      const nm = document.createElement('div'); nm.className = 'rk-name'; nm.textContent = c.name; const w = document.createElement('small'); w.textContent = { good: 'OK', warning: 'Check', serious: 'Act', info: 'Note' }[c.status]; nm.append(w);
+      const f = document.createElement('div'); f.className = 'rk-find'; f.textContent = c.find; if (c.rule) { const r = document.createElement('small'); r.textContent = c.rule; f.append(r); }
+      row.append(ic, nm, f); box.append(row);
+    }
+    $('cmNote').textContent = 'Based on the currency, category and name of each holding: a US-dollar account at a foreign bank also counts as foreign, and a foreign-currency account at a US bank may not. Thresholds and rules as published in 2026; confirm with a cross-border tax adviser before acting. Saved in this browser.';
+  }
+  for (const [id, k, chk] of [['cmUS', 'us'], ['cmLive', 'live'], ['cmFiling', 'filing'], ['cmUK', 'uk', true], ['cmAU', 'au', true]])
+    $(id).onchange = () => { TAX[k] = chk ? $(id).checked : $(id).value; savePrefs(); renderTax(); };
+
+  function renderPlan() {
+    if (mode === 'locked') return;
+    renderTargets(); renderFI(); renderGoals(); renderTax();
+  }
+
+  // ---------- Net worth history ----------
+  // Airtable mode: the daily sync's "Exposure history" rows (US dollars). Browser mode: a snapshot saved each day you
+  // open the app. Today's live totals are added as the last point. Amounts are shown at today's exchange rates.
+  // The change is split into money you put in (monthly contributions plus debt payments, from your current settings,
+  // so an estimate) and the rest: market moves and revaluations, net of interest.
+  const HIST_KEY = 'holdings.history';
+  let nwHistory = [], hsRange = '';
+  async function atLoadHistory() {
+    const out = []; let offset = '';
+    for (let page = 0; page < 30; page++) {
+      const q = 'pageSize=100' + (offset ? '&offset=' + encodeURIComponent(offset) : '');
+      const j = await at(`${session.baseId}/${encodeURIComponent('Exposure history')}?${q}`);
+      for (const r of j.records || []) {
+        const f = r.fields || {}, d = String(f.Date || '').slice(0, 10), nw = Number(f['Net worth']);
+        if (/^\d{4}-\d{2}-\d{2}$/.test(d) && Number.isFinite(nw)) out.push({ date: d, nw, assets: Number(f['Total assets']) || 0, debts: Number(f['Total debts']) || 0 });
+      }
+      if (!j.offset) break; offset = String(j.offset);
+    }
+    return out.sort((a, b) => a.date < b.date ? -1 : 1);
+  }
+  const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+  function householdUSD() {
+    let a = 0, d = 0;
+    for (const i of items) { const r = rateOf(i.currency); if (!r || !(i.value > 0)) continue; const v = i.value / r; if (i.kind === 'debt') d += v; else a += v; }
+    return { assets: a, debts: d, nw: a - d };
+  }
+  function recordLocalSnapshot() {
+    if (mode !== 'local' || !items.length) return;
+    const all = parse(store.get(HIST_KEY)); const map = all && typeof all === 'object' && !Array.isArray(all) ? all : {};
+    map[today()] = householdUSD();
+    const keys = Object.keys(map).filter(k => /^\d{4}-\d{2}-\d{2}$/.test(k)).sort(); while (keys.length > 1500) delete map[keys.shift()];
+    store.set(HIST_KEY, JSON.stringify(map));
+  }
+  function historyPoints() {
+    let pts = nwHistory;
+    if (mode === 'local') { const m = parse(store.get(HIST_KEY)) || {}; pts = Object.entries(m).filter(([k, v]) => /^\d{4}-\d{2}-\d{2}$/.test(k) && v && Number.isFinite(Number(v.nw))).map(([date, v]) => ({ date, nw: Number(v.nw), assets: Number(v.assets) || 0, debts: Number(v.debts) || 0 })).sort((a, b) => a.date < b.date ? -1 : 1); }
+    const live = { date: today(), ...householdUSD(), live: true };
+    pts = pts.filter(p => p.date < live.date).concat([live]);
+    return pts.map(p => ({ ...p, t: Date.parse(p.date + 'T12:00:00'), v: conv(p.nw, 'USD') })).filter(p => p.v !== null);
+  }
+  function renderHistory() {
+    const sec = $('hsSection');
+    if (mode === 'locked' || !items.length) { sec.hidden = true; return; }
+    sec.hidden = false;
+    const all = historyPoints(), first = all[0], last = all[all.length - 1], DAY = 864e5;
+    const spanDays = (last.t - first.t) / DAY;
+    const ranges = [['1M', 30], ['3M', 91], ['YTD', null], ['1Y', 365], ['All', Infinity]];
+    if (!hsRange || !ranges.some(r => r[0] === hsRange)) hsRange = spanDays > 365 ? '1Y' : 'All';
+    const rg = $('hsRange'); rg.textContent = '';
+    for (const [k, d] of ranges) {
+      if (k !== 'All' && d !== null && d > spanDays + 1) continue;
+      if (k === 'YTD' && first.date > `${new Date().getFullYear()}-01-01`) continue;
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'chip' + (k === hsRange ? ' on' : ''); b.textContent = k; b.setAttribute('aria-pressed', String(k === hsRange));
+      b.onclick = () => { hsRange = k; renderHistory(); }; rg.append(b);
+    }
+    rg.hidden = all.length < 2;
+    const start = hsRange === 'All' ? first.t : hsRange === 'YTD' ? Date.parse(`${new Date().getFullYear()}-01-01T00:00:00`) : last.t - (ranges.find(r => r[0] === hsRange)[1]) * DAY;
+    const pts = all.filter(p => p.t >= start - DAY / 2);
+    const chart = $('hsChart'); [...chart.querySelectorAll('svg')].forEach(n => n.remove()); $('hsTip').hidden = true;
+    if (pts.length < 2) {
+      ['hsChange', 'hsContrib', 'hsGrowth'].forEach(id => { $(id).textContent = '—'; $(id).classList.remove('pos', 'neg'); });
+      $('hsChangeSub').textContent = `Net worth today: ${fmt(last.v)}.`; $('hsContribSub').textContent = ''; $('hsGrowthSub').textContent = '';
+      $('hsNote').textContent = mode === 'airtable' ? 'History builds up from the daily sync’s Exposure history table. Check back tomorrow.' : 'History builds up from a snapshot saved each day you open the app in this browser. Check back tomorrow.';
+      return;
+    }
+    const p0 = pts[0], p1 = pts[pts.length - 1], months = (p1.t - p0.t) / DAY / 30.4375;
+    const conv2 = items.map(i => ({ ...i, value: conv(i.value, i.currency) || 0, monthly: i.monthly === null ? null : conv(i.monthly, i.currency) }));
+    const inAssets = conv2.filter(i => i.kind === 'asset').reduce((a, i) => a + (Number(i.monthly) || 0), 0);
+    const inDebts = conv2.filter(i => i.kind === 'debt' && i.value > 0).reduce((a, i) => a + (debtTerms(i, i.value, i.monthly).pay || 0), 0);
+    const put = (inAssets + inDebts) * months, change = p1.v - p0.v, growth = change - put;
+    const tone = (el, n) => { el.classList.toggle('pos', n > 0.5); el.classList.toggle('neg', n < -0.5); };
+    const sg = n => (n > 0.5 ? '+' : n < -0.5 ? '−' : '') + fmt(Math.abs(n));
+    const dl = d => new Date(d).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+    $('hsChange').textContent = sg(change); tone($('hsChange'), change);
+    $('hsChangeSub').textContent = `${fmt(p0.v)} on ${dl(p0.t)} → ${fmt(p1.v)} today${p0.v > 0 ? ` (${change >= 0 ? '+' : '−'}${Math.abs(change / p0.v * 100).toFixed(1)}%)` : ''}.`;
+    $('hsContrib').textContent = sg(put); tone($('hsContrib'), 0);
+    $('hsContribSub').textContent = `About ${fmt(inAssets)}/month of contributions${inDebts > 0.5 ? ` and ${fmt(inDebts)}/month of debt payments` : ''} over ${months < 1.5 ? Math.max(1, Math.round(months * 30.4375)) + ' days' : Math.round(months) + ' months'}.`;
+    $('hsGrowth').textContent = sg(growth); tone($('hsGrowth'), growth);
+    const base = p0.v + put / 2, r = base > 0 ? growth / base : null;
+    $('hsGrowthSub').textContent = r === null ? '' : `About ${r >= 0 ? '+' : '−'}${Math.abs(r * 100).toFixed(1)}% on your money${months >= 12 ? `, ${((Math.pow(1 + r, 12 / months) - 1) * 100).toFixed(1)}% a year` : ' over the period'} (money-weighted, net of interest).`;
+    histChart(chart, pts);
+    $('hsNote').textContent = `Whole household${ownerView ? ' (the owner filter doesn’t apply here)' : ''}, at today’s exchange rates. “Money you put in” is estimated from each holding’s current monthly contribution and debt payment, so it’s approximate. ${mode === 'airtable' ? 'From the daily sync’s Exposure history table.' : 'From daily snapshots saved in this browser.'}`;
+  }
+  function histChart(chart, pts) {
+    const tip = $('hsTip');
+    const W = Math.max(300, Math.round(chart.clientWidth || 640)), narrow = W < 520;
+    const H = narrow ? 200 : 240, L = narrow ? 46 : 56, R = 12, T = 12, B = 26, pw = W - L - R, ph = H - T - B;
+    const vals = pts.map(p => p.v); let lo = Math.min(...vals), hi = Math.max(...vals);
+    if (hi === lo) { hi = lo + Math.max(1, Math.abs(lo) * 0.01); lo = lo - Math.max(1, Math.abs(lo) * 0.01); }
+    const step = niceStep(hi - lo); lo = Math.floor(lo / step) * step; hi = Math.ceil(hi / step) * step;
+    const t0 = pts[0].t, t1 = pts[pts.length - 1].t, x = t => L + (t - t0) / (t1 - t0) * pw, y = v => T + (1 - (v - lo) / (hi - lo)) * ph;
+    const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: 'img', 'aria-label': `Net worth from ${pts[0].date} to today: ${fmt(pts[0].v)} to ${fmt(pts[pts.length - 1].v)}.` });
+    for (let v = lo; v <= hi + step / 2; v += step) { el('line', { class: 'grid', x1: L, x2: L + pw, y1: y(v), y2: y(v) }, svg); el('text', { class: 'axis-t', x: L - 8, y: y(v) + 4, 'text-anchor': 'end' }, svg).textContent = fmtShort(v); }
+    const ticks = narrow ? 3 : 5, span = t1 - t0;
+    for (let k = 0; k <= ticks; k++) { const t = t0 + span * k / ticks; el('text', { class: 'axis-t', x: x(t), y: H - 6, 'text-anchor': k === 0 ? 'start' : k === ticks ? 'end' : 'middle' }, svg).textContent = new Date(t).toLocaleDateString(undefined, span > 400 * 864e5 ? { month: 'short', year: '2-digit' } : { day: 'numeric', month: 'short' }); }
+    el('path', { class: 'sc-line ln-0', d: pts.map((p, i) => (i ? 'L' : 'M') + x(p.t).toFixed(1) + ' ' + y(p.v).toFixed(1)).join(' ') }, svg);
+    if (pts.length <= 40) for (const p of pts) el('circle', { class: 'hs-dot', cx: x(p.t), cy: y(p.v), r: 3 }, svg);
+    const cross = el('line', { class: 'cross', y1: T, y2: T + ph, visibility: 'hidden' }, svg);
+    const hit = el('rect', { x: L, y: T, width: pw, height: ph, fill: 'transparent' }, svg);
+    const show = evt => {
+      const r = svg.getBoundingClientRect(), px = (evt.clientX - r.left) * W / r.width, t = t0 + (px - L) / pw * span;
+      let best = pts[0]; for (const p of pts) if (Math.abs(p.t - t) < Math.abs(best.t - t)) best = p;
+      cross.setAttribute('x1', x(best.t)); cross.setAttribute('x2', x(best.t)); cross.setAttribute('visibility', 'visible');
+      tip.textContent = ''; const h = document.createElement('div'); h.textContent = best.live ? 'Today (live)' : new Date(best.t).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }); tip.append(h);
+      const b = document.createElement('div'); const v = document.createElement('b'); v.textContent = fmt(best.v); b.append('Net worth ', v); tip.append(b);
+      tip.hidden = false; const left = x(best.t) / W * r.width; tip.style.left = Math.min(Math.max(0, left - tip.offsetWidth / 2), r.width - tip.offsetWidth) + 'px';
+    };
+    hit.addEventListener('pointermove', show); hit.addEventListener('pointerdown', show); hit.addEventListener('pointerleave', () => { cross.setAttribute('visibility', 'hidden'); tip.hidden = true; });
+    chart.prepend(svg);
+  }
 
   // ---------- Start ----------
   if (mode === 'local') { fx = localFx(); loadScenarios(); }

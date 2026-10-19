@@ -150,6 +150,53 @@ At the top of the **Scenarios** tab, list manual moves such as "$20,000 from Che
 
 Hindsight uses trailing returns in each holding's own currency. Cash uses today's interest rate for the whole period. A new position uses your existing holdings in that bucket; if there are none, there's no hindsight figure. A move bigger than what's left in the source is capped. Taxes, fees and trading costs are ignored. Moves are saved in this browser.
 
+## Net worth history
+
+At the top of the overview: net worth over time (1M, 3M, YTD, 1Y, All) for the whole household, at today's exchange rates.
+
+- **Data:** in Airtable mode, the daily sync's Exposure history rows. In browser mode, a snapshot saved each day you open the app. Today's live totals are always the last point.
+- **Breakdown:** the change is split into **money you put in** and **markets & revaluation**. Money you put in is estimated from each holding's current monthly contribution and each debt's payment. Markets & revaluation is everything else, net of interest. It also shows an approximate money-weighted return (annualised over a year or more).
+
+Airtable's free plan allows 1,000 records per base, and the sync adds one Exposure history row a day, so you may eventually need to thin old rows or upgrade.
+
+## Plan tab
+
+**Target allocation.** Set a target % per asset class, by hand or starting from your current mix or a preset, with a ± band.
+
+- **What the targets cover:** investable assets. Property is excluded unless you tick it, and so is a cash reserve of N months of spending plus set-asides.
+- **When it trades:** if any class leaves its band, the plan trades everything back to target. "Only fix breaches" moves just those classes, using cash to balance.
+- **How trades become moves:**
+  - Excess cash goes first, lowest interest rate first.
+  - Then liquid holdings, flagged for possible capital gains.
+  - Retirement-account holdings become switches inside the account.
+  - Buys go to your largest existing holding in that class, else a new position.
+- **Alongside the trades:** the months it would take to close the gap with contributions alone, and the change in risk.
+- **Test this plan in the what-if** loads the trades into the rebalance what-if.
+
+**Financial independence.**
+- **FI number:** yearly spending (from expenses, or typed) ÷ withdrawal rate.
+- **Progress:** investments and cash, plus property if ticked, less debts not secured on excluded property.
+- **When:** the median age you'd get there and the chance by your target age, from 600 simulated markets in today's money. If that chance is under 75%, it shows the monthly saving needed to reach 75%.
+
+**Goals.** Name, target, month, funding (a set-aside or a holding) and monthly saving. Each goal shows its projected value (growth at the linked holding's expected return, 3% for cash and set-asides), whether it's on track, and the monthly saving needed if not.
+
+**Expat tax & reporting checks.** Choose whether you're a US taxpayer, where you live, your filing status, and any UK or Australian residency.
+
+- **US checks:**
+  - FBAR ($10,000 combined)
+  - Form 8938 thresholds by status and residence
+  - Possible PFICs (non-US funds outside pensions)
+  - Australian super and other foreign pensions
+  - Foreign-currency mortgages (exchange gains on repayment)
+  - Foreign property
+  - Foreign loan write-offs (cancellation-of-debt income)
+- **UK check:** offshore funds without reporting status.
+- **Australia note:** worldwide income.
+
+These are flags inferred from currency, category and names, not advice.
+
+Policy, FI settings, goals and tax settings are saved in this browser.
+
 ## Scenarios
 
 The **Scenarios** tab (or `#scenarios`) tests different allocations against each other, starting from what you hold today.
