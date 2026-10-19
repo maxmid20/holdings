@@ -1740,28 +1740,37 @@
       try {
         const j = await at(`${scPath()}?pageSize=100`); scTableOk = true;
         scenarios = (j.records || []).filter(r => REC_RE.test(r.id)).map(r => { let c = {}; try { c = JSON.parse(r.fields.Config || '{}'); } catch (x) { } return { id: r.id, ...cleanScenario({ ...c, name: r.fields.Name || c.name }) }; });
+        for (const k of Object.keys(scSaved)) delete scSaved[k];
+        for (const x of scenarios) scSaved[x.id] = JSON.parse(JSON.stringify(scConfig(x)));
         return;
       } catch (x) { scTableOk = false; }
     }
     const loc = parse(store.get(SC_KEY));
     scenarios = Array.isArray(loc) ? loc.map(s => ({ id: String(s.id || uid()), ...cleanScenario(s) })) : [];
+    for (const k of Object.keys(scSaved)) delete scSaved[k];
+    for (const x of scenarios) scSaved[x.id] = JSON.parse(JSON.stringify(scConfig(x)));
   }
+  const scConfig = sc => { const { id, _tmp, ...cfg } = sc; return cfg; };
+  const scPersistLocal = () => store.set(SC_KEY, JSON.stringify(scenarios.filter(x => x.id && !x._tmp).map(x => ({ ...scSaved[x.id] || scConfig(x), id: x.id }))));
+  const scSaved = {};   // id -> config as last saved (or loaded), so "discard" can restore it
   async function saveScenario(sc) {
-    const { id, ...cfg } = sc;
+    const id = sc.id, cfg = scConfig(sc);
     if (mode === 'airtable' && scTableOk) {
       const fields = { Name: cfg.name, Config: JSON.stringify(cfg) };
       if (id && REC_RE.test(id)) await at(`${scPath()}/${id}`, { method: 'PATCH', body: { fields, typecast: true } });
-      else { const j = await at(scPath(), { method: 'POST', body: { records: [{ fields }], typecast: true } }); const r = (j.records || [])[0]; if (r) { const k = scenarios.indexOf(sc); scenarios[k] = { ...sc, id: r.id }; return r.id; } }
+      else { const j = await at(scPath(), { method: 'POST', body: { records: [{ fields }], typecast: true } }); const r = (j.records || [])[0]; if (r) { sc.id = r.id; delete sc._tmp; scSaved[r.id] = JSON.parse(JSON.stringify(cfg)); return r.id; } }
+      scSaved[id] = JSON.parse(JSON.stringify(cfg));
       return id;
     }
     if (!sc.id) sc.id = uid();
-    store.set(SC_KEY, JSON.stringify(scenarios.map(x => { const { _tmp, ...rest } = x; return { ...rest, id: x.id || uid() }; })));
+    delete sc._tmp; scSaved[sc.id] = JSON.parse(JSON.stringify(cfg));
+    scPersistLocal();
     return sc.id;
   }
   async function deleteScenario(id) {
     if (mode === 'airtable' && scTableOk && REC_RE.test(id)) await at(`${scPath()}/${id}`, { method: 'DELETE' });
-    scenarios = scenarios.filter(s => s.id !== id);
-    if (!(mode === 'airtable' && scTableOk)) store.set(SC_KEY, JSON.stringify(scenarios));
+    scenarios = scenarios.filter(s => s.id !== id); delete scSaved[id];
+    if (!(mode === 'airtable' && scTableOk)) scPersistLocal();
   }
 
   // Today's investable assets by bucket (display currency), plus property held directly.
@@ -1775,11 +1784,13 @@
     }
     return { by, monthly, total: Object.values(by).reduce((a, b) => a + b, 0) };
   }
+  // Target weights at a given year, normalised over the buckets being rebalanced (property is left out when it's
+  // held as is, so a stray property weight can't make money disappear at each rebalance).
   const weightsAt = (sc, yr, now) => {
-    const f = sc.glide ? Math.min(1, yr / sc.glide) : 1, a = sc.start, b = sc.end;
-    const w = Object.fromEntries(BUCKETS.map(k => [k, (a[k] || 0) + ((b[k] || 0) - (a[k] || 0)) * f]));
-    const t = Object.values(w).reduce((x, y) => x + y, 0);
-    return t > 0 ? Object.fromEntries(BUCKETS.map(k => [k, w[k] / t])) : now;
+    const liq = Object.keys(now), f = sc.glide ? Math.min(1, yr / sc.glide) : 1, a = sc.start, b = sc.end;
+    const w = Object.fromEntries(liq.map(k => [k, (a[k] || 0) + ((b[k] || 0) - (a[k] || 0)) * f]));
+    const t = liq.reduce((x, k) => x + w[k], 0);
+    return t > 0 ? Object.fromEntries(liq.map(k => [k, w[k] / t])) : now;
   };
   function debtSeries(years, real, infl) {
     const debts = visible().filter(i => i.kind === 'debt');
@@ -1838,9 +1849,10 @@
       byYear[0].push(Object.values(v).reduce((a, b) => a + b, 0) - (debts[0] || 0));
       for (let y = 1; y <= years; y++) {
         const z = BUCKETS.map(() => gauss()), e = SC_L.map(row => row.reduce((a, l, j) => a + l * z[j], 0));
-        BUCKETS.forEach((b, i) => { v[b] *= Math.exp(params[i][0] + params[i][1] * e[i]); });
+        const G = BUCKETS.map((b, i) => Math.exp(params[i][0] + params[i][1] * e[i]));
+        BUCKETS.forEach((b, i) => { v[b] *= G[i]; });
         const w = sc.rebalance ? weightsAt(sc, y, now) : now, c = 12 * base * Math.pow(1 + sc.growth / 100, y - 1);
-        for (const b of liq) v[b] += c * (w[b] || 0);
+        for (const b of liq) v[b] += c * (w[b] || 0) * Math.sqrt(G[BUCKETS.indexOf(b)]);   // paid in through the year
         if (sc.rebalance) { const t = liq.reduce((a, b) => a + v[b], 0); for (const b of liq) v[b] = t * (w[b] || 0); }
         const defl = real ? Math.pow(1 + infl / 100, y) : 1;
         byYear[y].push(Object.values(v).reduce((a, b) => a + b, 0) / defl - (debts[y] || 0));
@@ -1872,9 +1884,15 @@
     return cleanScenario({ name: p.name, start, end: p.end || start, glide: p.glide || 0, assume, monthly: null, growth: 0, rebalance: true, holdProperty: true });
   }
   const scCur = () => scenarios.find(s => (s.id || s._tmp) === scSel);
+  // throw away unsaved edits: a new scenario disappears, a saved one goes back to its saved settings
+  function scDiscard() {
+    const s = scCur(); scDirty = false; if (!s) return;
+    if (!s.id || !scSaved[s.id]) { scenarios = scenarios.filter(x => x !== s); return; }
+    const k = scenarios.indexOf(s); scenarios[k] = { id: s.id, ...cleanScenario(JSON.parse(JSON.stringify(scSaved[s.id]))) };
+  }
   function renderScenarioTabs() {
     const el = $('scTabs'); el.textContent = '';
-    const mk = (key, label, cls) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'chip' + (scSel === key ? ' on' : '') + (cls ? ' ' + cls : ''); b.textContent = label; b.onclick = () => { if (scDirty && !confirm('Discard unsaved changes to this scenario?')) return; scDirty = false; scSel = key; renderScenarios(); }; el.append(b); };
+    const mk = (key, label, cls) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'chip' + (scSel === key ? ' on' : '') + (cls ? ' ' + cls : ''); b.textContent = label; b.onclick = () => { if (key === scSel) return; if (scDirty && !confirm('Discard unsaved changes to this scenario?')) return; if (scDirty) scDiscard(); scSel = key; renderScenarios(); }; el.append(b); };
     mk('asis', 'As is (your holdings)');
     scenarios.forEach((s, k) => { if (!s.id && !s._tmp) s._tmp = 'tmp' + k; mk(s.id || s._tmp, s.name, 'ln-chip-' + (k % 5)); });
   }
@@ -1933,8 +1951,8 @@
     const years = P.years, real = P.real, infl = P.infl, debts = debtSeries(years, real, infl);
     const asis = project(visible(), years, P.ret, infl, real).map(p => ({ year: p.year, nw: p.nw }));
     const runs = scenarios.map((s, k) => ({ s, k, pts: runScenario(s, years, real, infl, debts) }));
-    const series = [{ label: 'As is', cls: 'ln-asis', pts: asis }, ...runs.map(r => ({ label: r.s.name, cls: 'ln-' + (r.k % 5), pts: r.pts }))];
     const sel = scCur(), selRun = sel ? runs.find(r => r.s === sel) : null;
+    const series = [{ label: 'As is', cls: 'ln-asis', pts: asis }, ...runs.map(r => ({ label: r.s.name, cls: 'ln-' + (r.k % 5), pts: r.pts, sel: r.s === sel }))];
     const mc = sel ? monteCarlo(sel, years, real, infl, debts) : null;
     scChart($('scChart'), series, mc, years);
     // table
@@ -1994,11 +2012,11 @@
     const xStep = years <= (narrow ? 6 : 10) ? 1 : years <= 20 ? 5 : 10;
     for (let yr = 0; yr <= years; yr += xStep) el('text', { class: 'axis-t', x: x(yr), y: H - 6, 'text-anchor': 'middle' }, svg).textContent = yr === 0 ? 'Now' : 'Y' + yr;
     if (band) {
-      const sel = series.find(s => s.label === (scCur() || {}).name);
+      const sel = series.find(s => s.sel);
       const d = band.map((b, i) => (i ? 'L' : 'M') + x(b.year).toFixed(1) + ' ' + y(b.p90).toFixed(1)).join(' ') + ' ' + band.slice().reverse().map(b => 'L' + x(b.year).toFixed(1) + ' ' + y(b.p10).toFixed(1)).join(' ') + ' Z';
       el('path', { class: 'sc-band ' + (sel ? sel.cls : ''), d }, svg);
     }
-    for (const s of series) el('path', { class: 'sc-line ' + s.cls + (scCur() && s.label === scCur().name ? ' sel' : ''), d: s.pts.map((p, i) => (i ? 'L' : 'M') + x(p.year).toFixed(1) + ' ' + y(p.nw).toFixed(1)).join(' ') }, svg);
+    for (const s of series) el('path', { class: 'sc-line ' + s.cls + (s.sel ? ' sel' : ''), d: s.pts.map((p, i) => (i ? 'L' : 'M') + x(p.year).toFixed(1) + ' ' + y(p.nw).toFixed(1)).join(' ') }, svg);
     const cross = el('line', { class: 'cross', y1: T, y2: T + ph, visibility: 'hidden' }, svg);
     const hit = el('rect', { x: L, y: T, width: pw, height: ph, fill: 'transparent' }, svg);
     const show = evt => {
@@ -2027,6 +2045,8 @@
   }
   // controls
   $('scNew').onclick = () => {
+    if (scDirty && scCur() && !confirm('Discard unsaved changes to this scenario?')) return;
+    if (scDirty) scDiscard();
     const sc = newScenario($('scPreset').value); sc._tmp = 'tmp' + Date.now(); scenarios.push(sc); scSel = sc._tmp; scDirty = true; renderScenarios();
     if (scenarios.length > 5) showBanner('Up to 5 scenarios get their own colour; more will reuse colours.', 'info');
   };
@@ -2041,7 +2061,7 @@
     s.name = $('scName').value.trim().slice(0, 60) || 'Scenario';
     try {
       const id = await busy($('scSave'), () => saveScenario(s));
-      const saved = scenarios.find(x => x.id === id) || s; delete saved._tmp; scSel = saved.id || scSel; scDirty = false;
+      scSel = id || s.id || scSel; scDirty = false;
       renderScenarios(); showBanner('Scenario saved.', 'info');
     } catch (x) { showBanner(x.message); }
   };
@@ -2050,7 +2070,20 @@
   $('scMonthly').oninput = () => { const s = scCur(); if (!s) return; s.monthly = $('scMonthly').value === '' ? null : Math.max(0, Number($('scMonthly').value) || 0); scDirty = true; scRun(); };
   $('scGrowth').oninput = () => { const s = scCur(); if (!s) return; s.growth = Math.max(-20, Math.min(30, Number($('scGrowth').value) || 0)); scDirty = true; scRun(); };
   $('scRebal').onchange = () => { const s = scCur(); if (s) { s.rebalance = $('scRebal').checked; scDirty = true; scRun(); } };
-  $('scHold').onchange = () => { const s = scCur(); if (s) { s.holdProperty = $('scHold').checked; if (!s.holdProperty && !s.start.Property) { s.start.Property = 0; s.end.Property = 0; } scDirty = true; renderEditor(); scRun(); } };
+  $('scHold').onchange = () => {
+    const s = scCur(); if (!s) return;
+    s.holdProperty = $('scHold').checked;
+    if (!s.holdProperty) {
+      // property joins the rebalanced mix at its current share, so unticking doesn't silently sell it
+      const S = scStart(), share = S.total ? Math.round(S.by.Property / S.total * 1000) / 10 : 0;
+      for (const k of ['start', 'end']) {
+        const others = BUCKETS.filter(b => b !== 'Property'), t = others.reduce((a, b) => a + (s[k][b] || 0), 0);
+        for (const b of others) s[k][b] = t ? Math.round((s[k][b] || 0) / t * (100 - share) * 10) / 10 : 0;
+        s[k].Property = share;
+      }
+    } else { s.start.Property = 0; s.end.Property = 0; }
+    scDirty = true; renderEditor(); scRun();
+  };
   $('scReset').onclick = () => { const s = scCur(); if (!s) return; s.assume = Object.fromEntries(BUCKETS.map(b => [b, SC_DEFAULTS[b].slice()])); scDirty = true; renderEditor(); scRun(); };
   const onScShared = () => { P.years = Math.round(clampNum($('scYears').value, 1, 50, 20)); P.infl = clampNum($('scInfl').value, 0, 20, 2.5); P.real = $('scReal').checked; savePrefs(); scRun(); };
   ['scYears', 'scInfl'].forEach(id => $(id).addEventListener('change', onScShared)); $('scReal').addEventListener('change', onScShared);
