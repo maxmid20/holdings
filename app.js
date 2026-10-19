@@ -3399,16 +3399,130 @@
     }
     return a.map((r, i) => r[i]);
   }
+  // ---- recommendations: more independent streams, lower correlation ----
+  // Measured on the priced part of the portfolio, at its actual weights. "Weighted streams" = diversification ratio²
+  // ((Σ wᵢσᵢ / σₚ)²): N for N equal-sized uncorrelated holdings, 1 if everything moves together. Candidates are the
+  // reference streams the daily sync keeps (public ETFs used only as price proxies, not product advice). Each is sized
+  // and funded from the cluster driving most of the risk, then the best few are combined greedily.
+  const REF_INFO = {
+    TLT: { name: 'Long-term Treasuries', bucket: 'Bonds', why: 'tends to rise when growth disappoints and rates fall (the deflationary-bust quadrant)' },
+    SCHP: { name: 'Inflation-linked bonds (TIPS)', bucket: 'Bonds', why: 'pays inflation plus a real yield, so it holds up when inflation surprises' },
+    DBC: { name: 'Broad commodities', bucket: 'Commodities', why: 'tends to do well in inflationary booms and supply shocks, when stocks and bonds struggle' },
+    IAU: { name: 'Gold', bucket: 'Gold', why: 'a hedge against currency debasement, falling real rates and crises' },
+    DBMF: { name: 'Trend-following (managed futures)', bucket: 'Other', why: 'follows sustained moves up or down across markets, so it has often made money in long bear markets' },
+    VEA: { name: 'Developed ex-US stocks', bucket: 'Equities', why: 'different economies, sectors and currencies from US stocks' },
+    VWO: { name: 'Emerging-market stocks', bucket: 'Equities', why: 'driven by different growth cycles, commodities and currencies' }
+  };
+  function rsStats(w, Rm, mu) {
+    const n = w.length, T = Rm[0].length, mean = Rm.map(r => r.reduce((a, b) => a + b, 0) / T);
+    const S = Rm.map((r, a) => Rm.map((q, b) => r.reduce((t, v, k) => t + (v - mean[a]) * (q[k] - mean[b]), 0) / (T - 1)));
+    let v = 0; const Sw = S.map(r => r.reduce((t, x, b) => t + x * w[b], 0));
+    for (let a = 0; a < n; a++) v += w[a] * Sw[a];
+    const sig = S.map((r, a) => Math.sqrt(r[a])), vol = Math.sqrt(v * 12), dr = w.reduce((t, x, a) => t + x * sig[a], 0) * Math.sqrt(12) / (vol || 1);
+    return { vol, bets: dr * dr, ret: w.reduce((t, x, a) => t + x * mu[a], 0), rc: w.map((x, a) => v ? x * Sw[a] / v : 0), S };
+  }
+  function renderStreamRecs(ctx) {
+    const box = $('rsRecs'); box.textContent = '';
+    const { use, months, C } = ctx, n = use.length, prices = macroData.prices || {};
+    const add = (cls, html) => { const d = document.createElement('div'); d.className = cls; d.innerHTML = html; box.append(d); return d; };
+    const WT = use.reduce((a, s) => a + s.value, 0), w0 = use.map(s => s.value / WT);
+    const mu0 = use.map(s => { const it = s.items, t = it.reduce((a, i) => a + i.value, 0); return t ? it.reduce((a, i) => a + i.value * fwdOf(i), 0) / t : 0; });
+    const R0 = use.map(s => months.map(m => s.ret[m]));
+    const base = rsStats(w0, R0, mu0);
+    // portfolio return series, for each candidate's correlation with what you already hold
+    const port = months.map((_, k) => R0.reduce((t, r, a) => t + w0[a] * r[k], 0));
+    const corr = (x, y) => { const T = x.length, mx = x.reduce((a, b) => a + b, 0) / T, my = y.reduce((a, b) => a + b, 0) / T; let sxy = 0, sx = 0, sy = 0; for (let k = 0; k < T; k++) { sxy += (x[k] - mx) * (y[k] - my); sx += (x[k] - mx) ** 2; sy += (y[k] - my) ** 2; } return sxy / Math.sqrt(sx * sy || 1); };
+    // 1) what is driving the risk
+    const order = base.rc.map((r, a) => a).sort((a, b) => base.rc[b] - base.rc[a]), top = order[0];
+    const cluster = use.map((_, j) => j).filter(j => j === top || C[top][j] >= 0.7);
+    const clRisk = cluster.reduce((a, j) => a + base.rc[j], 0), clW = cluster.reduce((a, j) => a + w0[j], 0);
+    const pc = x => Math.round(x * 100) + '%', lbl = j => esc(use[j].label);
+    const lines = [], avgC = g => { let s = 0, p = 0; for (const a of g) for (const b of g) if (a < b) { s += C[a][b]; p++; } return p ? s / p : 1; };
+    const and = l => l.length > 1 ? l.slice(0, -1).join(', ') + ' and ' + l[l.length - 1] : l[0];
+    // duplicate clusters (≥0.85): one bet held several times
+    const par = use.map((_, i) => i), find = i => par[i] === i ? i : (par[i] = find(par[i]));
+    for (let a = 0; a < n; a++) for (let b = a + 1; b < n; b++) if (C[a][b] >= 0.85) par[find(a)] = find(b);
+    const groupsC = {}; use.forEach((_, i) => { (groupsC[find(i)] = groupsC[find(i)] || []).push(i); });
+    const dupes = Object.values(groupsC).filter(g => g.length > 1), same = g => g.length === cluster.length && g.every(j => cluster.includes(j));
+    const consol = 'Holding them separately doesn’t diversify: treat them as one bet when sizing, and consolidate if that’s simpler (watch tax on selling).';
+    lines.push((cluster.length > 1 ? `<b>${and(cluster.map(lbl))} ${dupes.some(same) ? `are effectively one stream (average correlation ${avgC(cluster).toFixed(2)})` : 'move together'} and drive ${pc(clRisk)} of your measured risk</b>` : `<b>${lbl(top)} drives ${pc(clRisk)} of your measured risk</b>`) +
+      ` from ${pc(clW)} of the priced value. Sized as they are, your ${n} priced holdings behave like <b>${base.bets.toFixed(1)}</b> independent stream${base.bets.toFixed(1) === '1.0' ? '' : 's'} (volatility ${(base.vol * 100).toFixed(1)}%/yr).` + (dupes.some(same) ? ' ' + consol : ''));
+    for (const g of dupes.filter(g => !same(g)))
+      lines.push(`<b>${and(g.map(lbl))}</b> are effectively one stream (average correlation ${avgC(g).toFixed(2)}), together ${pc(g.reduce((t, j) => t + w0[j], 0))} of value and ${pc(g.reduce((t, j) => t + base.rc[j], 0))} of risk. ${consol}`);
+    const intro = add('rs-rec-intro', ''); intro.innerHTML = lines.map(l => `<p>${l}</p>`).join('');
+    // 2) candidates
+    const held = new Set(use.map(s => s.k));
+    const cands = Object.keys(REF_INFO).filter(t => !held.has(t) && !(t === 'IAU' && held.has('coin:XAU'))).map(t => {
+      const m = ((prices['ref:' + t] || {}).m || []).filter(p => Array.isArray(p) && Number(p[1]) > 0), ret = {};
+      for (let j = 1; j < m.length; j++) ret[m[j][0]] = m[j][1] / m[j - 1][1] - 1;
+      return { t, ...REF_INFO[t], ret, ok: months.every(mm => mm in ret) };
+    });
+    const ready = cands.filter(c => c.ok), waiting = cands.filter(c => !c.ok);
+    if (!ready.length) {
+      add('hint', mode === 'airtable' ? `Suggestions appear once the daily sync has fetched price history for the reference streams (${cands.map(c => c.name.toLowerCase()).join(', ')}). It adds a few each day within the free Alpha Vantage allowance, so allow up to a week.` : 'Suggestions need the daily sync’s price history (Airtable mode).');
+      return;
+    }
+    // weights after adding candidate(s) at sizes, funded pro rata from the risk cluster
+    const fund = cluster.slice(), fundW = fund.reduce((a, j) => a + w0[j], 0);
+    const build = picks => {   // picks: [{c, a}]
+      const take = Math.min(fundW * 0.9, picks.reduce((t, p) => t + p.a, 0)), scale = take / (picks.reduce((t, p) => t + p.a, 0) || 1);
+      const w = w0.map((x, j) => fund.includes(j) ? x - take * x / fundW : x);
+      const R = R0.concat(picks.map(p => months.map(m => p.c.ret[m]))), mu = mu0.concat(picks.map(p => SC_DEFAULTS[p.c.bucket][0]));
+      return { st: rsStats(w.concat(picks.map(p => p.a * scale)), R, mu), picks: picks.map(p => ({ ...p, a: p.a * scale })) };
+    };
+    const SIZES = [0.05, 0.1, 0.15, 0.2];
+    const bestSize = (c, prev) => { let best = null; for (const a of SIZES) { const r = build([...prev, { c, a }]); if (!best || r.st.bets > best.st.bets + 0.02) best = { ...r, a }; } return best; };
+    const singles = ready.map(c => ({ c, corr: corr(months.map(m => c.ret[m]), port), ...bestSize(c, []) })).sort((x, y) => y.st.bets - x.st.bets);
+    // greedy package of up to 3
+    let pack = [], cur = { st: base };
+    for (let k = 0; k < 3; k++) {
+      const total = pack.reduce((t, p) => t + p.a, 0); if (total >= 0.35) break;
+      let best = null;
+      for (const c of ready.filter(c => !pack.some(p => p.c === c))) { const r = bestSize(c, pack); if (r && (!best || r.st.bets > best.st.bets)) best = r; }
+      if (!best || best.st.bets - cur.st.bets < 0.15) break;
+      pack = best.picks; cur = best;
+    }
+    const eff = st => st.vol ? (st.ret - SC_DEFAULTS.Cash[0]) / (st.vol * 100) : 0;   // excess return over cash ÷ volatility
+    const money = a => fmt(a * WT), sgn = (x, d = 1) => (x >= 0 ? '+' : '−') + Math.abs(x).toFixed(d);
+    const delta = (st) => `<span class="rs-d"><b>${base.bets.toFixed(1)} → ${st.bets.toFixed(1)}</b> streams</span><span class="rs-d"><b>${(base.vol * 100).toFixed(1)}% → ${(st.vol * 100).toFixed(1)}%</b> volatility</span><span class="rs-d"><b>${sgn(st.ret - base.ret)}%/yr</b> expected return</span><span class="rs-d"><b>${eff(base).toFixed(2)} → ${eff(st).toFixed(2)}</b> return per unit of risk</span>`;
+    const fromTxt = fund.length > 1 ? `${fund.map(lbl).join(', ')} (pro rata)` : lbl(fund[0]);
+    if (pack.length) {
+      const d = add('rs-pack', `<div class="label">Suggested package</div>
+        <p>${pack.map(p => `<b>${pc(p.a)} ${esc(p.c.name)}</b> (${money(p.a)})`).join(' + ')}, funded from ${fromTxt}.</p>
+        <div class="rs-ds">${delta(cur.st)}</div>`);
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'btn primary'; b.textContent = 'Model in Rebalance what-if'; b.onclick = () => rsModel(pack, fund); d.append(b);
+    } else add('rs-pack', `<p>None of the reference streams adds much at sensible sizes: your priced holdings are already about as diversified as these candidates can make them.</p>`);
+    const tbl = document.createElement('table'); tbl.className = 'proj-table rs-cands';
+    tbl.innerHTML = `<thead><tr><th>Stream to add</th><th title="Correlation with your portfolio">Corr.</th><th>Size</th><th title="Change in independent streams">Streams</th><th title="Change in volatility">Vol.</th><th title="Change in expected return">Return</th><th title="Change in return per unit of risk">Ret./risk</th><th></th></tr></thead>`;
+    const tb = document.createElement('tbody');
+    for (const s of singles) {
+      const tr = document.createElement('tr'), gain = s.st.bets - base.bets;
+      tr.innerHTML = `<td><div class="name">${esc(s.c.name)} <span class="muted">${esc(s.c.t)}</span></div><div class="hint">${esc(s.c.why)}</div></td><td>${s.corr.toFixed(2)}</td><td>${pc(s.a)}<div class="hint">${money(s.a)}</div></td><td class="${gain >= 0.15 ? 'pos' : ''}">${sgn(gain)}</td><td>${sgn((s.st.vol - base.vol) * 100)}</td><td>${sgn(s.st.ret - base.ret)}%</td><td class="${eff(s.st) > eff(base) + 0.005 ? 'pos' : ''}">${sgn(eff(s.st) - eff(base), 2)}</td>`;
+      const td = document.createElement('td'); const b = document.createElement('button'); b.type = 'button'; b.className = 'link-btn'; b.textContent = 'Model'; b.setAttribute('aria-label', `Model adding ${s.c.name}`); b.onclick = () => rsModel(s.picks, fund); td.append(b); tr.append(td); tb.append(tr);
+    }
+    tbl.append(tb); const wrap = document.createElement('div'); wrap.className = 'proj-table-wrap'; wrap.append(tbl); box.append(wrap);
+    add('hint', `Each stream is sized (5–20% of the ${fmt(WT)} priced portfolio) to add the most independent streams and funded from ${fromTxt}, the cluster driving most of the risk. Columns show the change from adding each one on its own (Corr. = its correlation with your portfolio; Vol. and Return in percentage points a year). Measured on ${months.length} months of actual returns${waiting.length ? `; still waiting for price history: ${waiting.map(c => c.name).join(', ')}` : ''}. Expected returns use your assumptions for each asset class; return per unit of risk is expected return above cash ÷ volatility, so a higher figure means each unit of risk is better paid even if the total return is lower. Tickers are public price proxies, not product recommendations. Correlations change, notably stocks and bonds have moved together since 2022, so treat these as a direction, not a precise answer.`);
+  }
+  function rsModel(picks, fund) {
+    const assets = mvAssets(), use = fund.map(j => rsLast.use[j]);
+    for (const p of picks) {
+      const amt = p.a * rsLast.WT, items = use.flatMap(s => s.items).filter(i => assets.some(a => a.id === i.id)), t = items.reduce((a, i) => a + i.value, 0);
+      for (const i of items) { const x = Math.round(amt * i.value / t / 100) * 100; if (x > 0 && MV.length < 20) MV.push({ from: i.id, to: 'b:' + p.c.bucket, amount: x }); }
+    }
+    savePrefs(); location.hash = '#scenarios'; renderMoves();
+    setTimeout(() => { const s = $('mvSection'); if (s) s.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 50);
+  }
+  let rsLast = null;
   const RS_POS = ['#b7d3f6', '#86b6ef', '#3987e5', '#1c5cab'], RS_NEG = ['#f6c9c8', '#ef9a99', '#e66767', '#b52e2d'];
   function renderStreams() {
     const sec = $('rsSection'), prices = macroData.prices;
-    const reset = msg => { ['rsEff', 'rsAvg', 'rsVol'].forEach(id => { $(id).textContent = '—'; }); ['rsEffSub', 'rsAvgSub', 'rsVolSub', 'rsDupes'].forEach(id => { $(id).textContent = ''; }); $('rsHeat').textContent = ''; $('rsNote').textContent = msg; };
+    const reset = msg => { ['rsEff', 'rsAvg', 'rsVol'].forEach(id => { $(id).textContent = '—'; }); ['rsEffSub', 'rsAvgSub', 'rsVolSub', 'rsDupes'].forEach(id => { $(id).textContent = ''; }); $('rsHeat').textContent = ''; $('rsRecs').textContent = ''; $('rsRecsH').hidden = true; $('rsNote').textContent = msg; };
     sec.hidden = false;
     if (!prices || typeof prices !== 'object') { reset(mode === 'airtable' ? 'Waiting for data: once the “Macro” table exists, the daily sync saves monthly prices for each holding with a ticker.' : 'Return streams need the daily sync’s price history (Airtable mode).'); return; }
     const vis = visible().filter(i => i.kind === 'asset' && i.value > 0 && !i.noFx);
     const keyOf = i => i.ticker || ({ BTC: 'coin:BTC', XAU: 'coin:XAU' })[i.currency] || '';
     const groups = {};
-    for (const i of vis) { const k = keyOf(i); if (!k) continue; (groups[k] = groups[k] || { k, names: [], value: 0 }).names.push(i.name); groups[k].value += i.value; }
+    for (const i of vis) { const k = keyOf(i); if (!k) continue; const g = groups[k] = groups[k] || { k, names: [], items: [], value: 0 }; g.names.push(i.name); g.items.push(i); g.value += i.value; }
     const series = Object.values(groups).map(g => {
       const m = ((prices[g.k] || {}).m || []).filter(p => Array.isArray(p) && Number(p[1]) > 0);
       const ret = {}; for (let j = 1; j < m.length; j++) ret[m[j][0]] = m[j][1] / m[j - 1][1] - 1;
@@ -3452,6 +3566,8 @@
     const dupes = []; for (let a = 0; a < n; a++) for (let b = a + 1; b < n; b++) if (C[a][b] > 0.9) dupes.push(`${use[a].label} & ${use[b].label} (${C[a][b].toFixed(2)})`);
     $('rsDupes').textContent = dupes.length ? `Near-duplicates (correlation above 0.9): ${dupes.join(', ')}. Holding both adds little diversification.` : 'No near-duplicates (nothing correlated above 0.9).';
     $('rsNote').textContent = `Total returns (dividends reinvested) from Alpha Vantage monthly prices, refreshed by the daily sync; gold uses IAU as a proxy. Not included (no price history): ${missing.length ? missing.join(', ') : 'nothing'}, nor cash and property. Correlations rise in crises, so real-world diversification is usually lower than this shows.`;
+    rsLast = { use, WT: use.reduce((a, s) => a + s.value, 0) }; $('rsRecsH').hidden = false;
+    renderStreamRecs({ use, months, C });
   }
 
   function renderMacro() {

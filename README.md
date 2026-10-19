@@ -244,6 +244,7 @@ A macro investor's view, in the spirit of Bridgewater:
   - the gap to policy and natural hedges (debt in the same currency);
   - suggested actions, naming the holdings that bring each currency.
 - **Return streams:** correlations between your holdings from real monthly total returns (24–60 months).
+- **How to add independent streams:** recommendations from the same returns at your actual weights. It names the holdings driving most of the risk, flags holdings that are effectively one bet, and tests adding reference streams: long Treasuries (TLT), TIPS (SCHP), commodities (DBC), gold (IAU), trend-following (DBMF), developed ex-US (VEA) and emerging-market stocks (VWO). Each is sized at 5–20% of the priced portfolio, funded from the risk-driving cluster, and shown with its effect on independent streams, volatility, expected return and return per unit of risk. A suggested package combines the best few. "Model" sends the moves to Rebalance what-if. The tickers are price proxies, not product advice.
   - The number of independent streams is the participation ratio of the correlation matrix's eigenvalues.
   - It also shows measured volatility and flags near-duplicates (correlation above 0.9).
 

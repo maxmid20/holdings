@@ -421,3 +421,11 @@ dialog.wide{width:min(760px,calc(100vw - 32px))}
 .sf-cell input{width:100%;min-width:0;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px 6px;text-align:right;font:inherit;font-size:13px;font-variant-numeric:tabular-nums}
 .sf-cell input:focus{outline:2px solid var(--s1);outline-offset:0}
 @media (max-width:640px){.sf-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.rs-rec-intro p{margin:0 0 8px;font-size:14px;line-height:1.5}
+.rs-pack{border:1px solid var(--line);border-left:3px solid var(--s1);border-radius:10px;padding:12px 14px;margin:12px 0;display:grid;gap:8px;justify-items:start}
+.rs-pack p{margin:0;font-size:14px;line-height:1.5}
+.rs-ds{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:13px;color:var(--muted)}
+.rs-ds b{color:var(--text);font-variant-numeric:tabular-nums}
+.rs-cands td{vertical-align:top;white-space:nowrap}.rs-cands td:first-child{min-width:200px;white-space:normal}.rs-cands th{white-space:nowrap}
+.rs-cands td.pos{color:var(--pos);font-weight:600}
+.rs-cands .hint{margin:2px 0 0;font-size:12px}
