@@ -3052,7 +3052,13 @@
   // ---- macro regime ----
   const fS = (sid, drop = 0) => { const s = ((macroData.fred || {}).series || {})[sid]; const m = s && Array.isArray(s.m) ? s.m : []; return drop ? m.slice(0, Math.max(0, m.length - drop)) : m; };
   const lastV = m => m.length ? Number(m[m.length - 1][1]) : null;
-  const agoV = (m, n) => m.length > n ? Number(m[m.length - 1 - n][1]) : null;
+  // value n calendar months before the latest point (or the nearest earlier one, as series can have gaps)
+  const ymShift = (ym, n) => { const [y, mo] = ym.split('-').map(Number), t = y * 12 + (mo - 1) - n; return `${Math.floor(t / 12)}-${String(t % 12 + 1).padStart(2, '0')}`; };
+  const agoV = (m, n) => {
+    if (!m.length) return null; const want = ymShift(m[m.length - 1][0], n);
+    for (let k = m.length - 1; k >= 0; k--) if (m[k][0] <= want) return m[k][0] >= ymShift(want, 2) ? Number(m[k][1]) : null;
+    return null;
+  };
   const yoyOf = (m, n = 0) => { const a = agoV(m, n), b = agoV(m, n + 12); return a !== null && b ? (a / b - 1) * 100 : null; };
   const clamp1 = x => Math.max(-1, Math.min(1, x));
   function regimeAt(drop) {
@@ -3061,7 +3067,8 @@
     // growth
     const un = fS('UNRATE', drop);
     if (un.length >= 15) {
-      const u3 = (agoV(un, 0) + agoV(un, 1) + agoV(un, 2)) / 3, low = Math.min(...un.slice(-15, -3).map(p => Number(p[1])));
+      const lastYm = un[un.length - 1][0], u3 = (agoV(un, 0) + agoV(un, 1) + agoV(un, 2)) / 3;
+      const low = Math.min(...un.filter(p => p[0] >= ymShift(lastYm, 14) && p[0] <= ymShift(lastYm, 3)).map(p => Number(p[1])));
       add('Growth', 'Unemployment trend', -((u3 - low) - 0.25) / 0.35, `${lastV(un).toFixed(1)}%`, `3-month average ${(u3 - low >= 0 ? '+' : '')}${(u3 - low).toFixed(2)} pts vs its 12-month low (0.5+ has marked recessions)`);
     }
     const pay = fS('PAYEMS', drop);
