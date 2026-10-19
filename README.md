@@ -209,7 +209,13 @@ A macro investor's view, in the spirit of Bridgewater:
 - **Four-environment balance:** the All Weather lens.
   - **Risk by environment:** each asset class is assigned to the environments it's built for (rising or falling growth, rising or falling inflation), and your risk contributions are summed per environment. Balanced is about 25% each.
   - **Quadrant analogues:** rough one-year analogue returns for each quadrant.
-  - **A balanced mix to compare:** an environment-balanced mix of shares, bonds, gold and commodities, with ties broken toward risk parity. One click makes it your target allocation.
+  - **Suggested allocations:** buttons build a mix of shares, bonds, gold and commodities for each approach:
+    - **Balanced (All Weather):** 25% of risk in each environment.
+    - **Closest to my mix:** balanced, moving as little as possible from your current mix.
+    - **Match the regime:** tilts up to 10 points of risk toward the regime dashboard's read, scaled by signal strength.
+    - **Prepare buttons:** one per quadrant (goldilocks, inflationary boom, stagflation, deflationary bust), each tilting 12 points toward it.
+
+    Each suggestion is compared with your investable money now: the return in each environment, the worst environment, expected return and volatility. **Use as my target allocation** sends it to the Plan tab, and **Compare in Scenarios** adds it as a scenario.
 - **Currency policy:** set where you'll spend (defaults to your expenses' currencies) and a band. You get:
   - your net exposure per currency (look-through, net of debts);
   - the gap to policy and natural hedges (debt in the same currency);

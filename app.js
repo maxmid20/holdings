@@ -2978,19 +2978,51 @@
     return Object.fromEntries(ENVS.map(k => [k, e[k] / t]));
   }
   const envGap = sh => ENVS.reduce((a, k) => a + (sh[k] - .25) ** 2, 0);
-  // the liquid mix (equities, bonds, gold, commodities) whose risk is most evenly spread across the four environments
-  function balancedMix() {
+  // Suggested mixes of the four core asset classes (shares, bonds, gold, commodities): search in 2.5% steps for the mix
+  // whose risk across the four environments best matches a target (25% each = balanced), with ties broken toward
+  // spreading risk across asset classes (risk parity) and, for "closest", toward your current core mix.
+  const CORE = ['Equities', 'Bonds', 'Gold', 'Commodities'];
+  function suggestMix(T, w0) {
     let best = null;
     for (let e = 0; e <= 100; e += 2.5) for (let b = 0; b <= 100 - e; b += 2.5) for (let g = 0; g <= 100 - e - b; g += 2.5) {
       const c = 100 - e - b - g, by = { Equities: e, Bonds: b, Cash: 0, Gold: g, Property: 0, Commodities: c, Bitcoin: 0, Other: 0 };
       const M = riskModel(by, 0); if (!M) continue;
-      // environment balance first; ties broken toward spreading risk across asset classes too (risk parity)
-      const gap = envGap(envShares(M)) + 0.05 * BUCKETS.reduce((a, k) => a + Math.max(0, M.rc[k]) ** 2, 0);
-      if (!best || gap < best.gap - 1e-12) best = { gap, mix: { Equities: e, Bonds: b, Gold: g, Commodities: c }, M };
+      const sh = envShares(M);
+      let obj = ENVS.reduce((a, k) => a + (sh[k] - T[k]) ** 2, 0) + 0.05 * BUCKETS.reduce((a, k) => a + Math.max(0, M.rc[k]) ** 2, 0);
+      if (w0) obj += 0.3 * CORE.reduce((a, k) => a + ((by[k] - w0[k]) / 100) ** 2, 0);
+      if (!best || obj < best.obj - 1e-12) best = { obj, mix: { Equities: e, Bonds: b, Gold: g, Commodities: c }, M };
     }
     return best;
   }
-  let balancedCache = null;
+  const tiltT = (gUp, iUp, size) => ({ 'Rising growth': .25 + size * gUp, 'Falling growth': .25 - size * gUp, 'Rising inflation': .25 + size * iUp, 'Falling inflation': .25 - size * iUp });
+  const ENV_SUGGEST = [
+    { k: 'balanced', label: 'Balanced (All Weather)', why: 'Equal risk in all four environments: what Bridgewater holds when it has no view. It should never be the best or the worst in any single environment.' },
+    { k: 'closest', label: 'Closest to my mix', why: 'Balances the four environments while moving as little as possible from your current shares, bonds, gold and commodities.' },
+    { k: 'regime', label: 'Match the regime', why: '' },
+    { k: 'gi', label: 'Prepare: goldilocks', why: 'Tilts risk toward rising growth and falling inflation (more shares and bonds), while keeping some protection elsewhere.' },
+    { k: 'GI', label: 'Prepare: inflationary boom', why: 'Tilts risk toward rising growth and rising inflation (more commodities and shares, fewer bonds).' },
+    { k: 'Gi', label: 'Prepare: stagflation', why: 'Tilts risk toward falling growth and rising inflation (more gold and commodities, fewer shares).' },
+    { k: 'gI', label: 'Prepare: deflationary bust', why: 'Tilts risk toward falling growth and falling inflation (more bonds, fewer commodities).' }
+  ];
+  const QUAD_DIR = { gi: [1, -1], GI: [1, 1], Gi: [-1, 1], gI: [-1, -1] };   // [growth, inflation] direction of each quadrant (keys as in QUADS)
+  const envCache = {};
+  let envPick = prefs.envPick || 'balanced';
+  function envSuggestion(k, by) {
+    const coreT = CORE.reduce((a, c) => a + (by[c] || 0), 0);
+    const w0 = coreT ? Object.fromEntries(CORE.map(c => [c, (by[c] || 0) / coreT * 100])) : null;
+    let T = tiltT(0, 0, 0), extra = '';
+    if (k === 'closest') { if (!w0) return null; }
+    else if (k === 'regime') {
+      const R = macroData.fred ? regimeAt(0) : null;
+      if (!R || R.g === null || R.i === null) return null;
+      T = tiltT(R.g, R.i, 0.10);
+      extra = `Tilts toward ${quadOf(R.g, R.i).name.toLowerCase()} (growth ${R.g >= 0 ? '+' : ''}${R.g.toFixed(2)}, inflation ${R.i >= 0 ? '+' : ''}${R.i.toFixed(2)}), by up to 10 points of risk scaled to how strong the signals are, while still holding all four environments. Regime calls are often wrong, so the tilt is deliberately modest.`;
+    } else if (QUAD_DIR[k]) T = tiltT(...QUAD_DIR[k], 0.12);
+    const key = k + (k === 'closest' ? JSON.stringify(w0) : k === 'regime' ? JSON.stringify(T) : '');
+    if (!envCache[key]) envCache[key] = suggestMix(T, k === 'closest' ? w0 : null);
+    return { ...envCache[key], T, extra };
+  }
+  let balancedCache = null;   // kept for older callers (cleared on lock)
   function renderEnv() {
     const vis = visible(), D = vis.filter(i => i.kind === 'debt' && i.value > 0 && !i.noFx).reduce((a, i) => a + i.value, 0);
     const by = bucketValues(vis), M = riskModel(by, D), sec = $('envSection');
@@ -3028,14 +3060,25 @@
       tb.append(tr);
     }
     tbl.append(tb);
-    // balanced alternative
-    if (!balancedCache) balancedCache = balancedMix();
-    const B = balancedCache, bs = envShares(B.M);
-    $('envBalSub').textContent = `For your investable money, spreading risk evenly would look like ${Object.entries(B.mix).filter(([, w]) => w > 0).map(([k, w]) => `${k.toLowerCase()} ${w}%`).join(', ')}. ` +
-      `Its risk splits ${ENVS.map(k => Math.round(bs[k] * 100) + '%').join(' / ')} across the four environments, and in your worst environment (${worst.q.name.toLowerCase()}) it would ${(() => { const r = Object.entries(B.mix).reduce((a, [k, w]) => a + w / 100 * (worst.q.s[k] || 0), 0); return r >= 0 ? 'gain about ' + r.toFixed(0) + '%' : 'lose about ' + Math.abs(r).toFixed(0) + '%'; })()} instead of ${nw > 0 ? Math.abs(worst.tot / nw * 100).toFixed(0) + '% of net worth' : 'your loss'}.`;
+    // suggested allocations
+    const opts = $('envOpts'); opts.textContent = '';
+    const regimeOk = !!(macroData.fred && (() => { const R = regimeAt(0); return R.g !== null && R.i !== null; })());
+    if (envPick === 'regime' && !regimeOk) envPick = 'balanced';
+    for (const o of ENV_SUGGEST) {
+      const btn = document.createElement('button'); btn.type = 'button'; btn.className = 'chip' + (o.k === envPick ? ' on' : ''); btn.textContent = o.label;
+      btn.setAttribute('aria-pressed', String(o.k === envPick));
+      if (o.k === 'regime' && !regimeOk) { btn.disabled = true; btn.title = 'Needs the macro indicators from the daily sync'; }
+      btn.onclick = () => { envPick = o.k; prefs.envPick = o.k; savePrefs(); renderEnv(); };
+      opts.append(btn);
+    }
+    const pick = ENV_SUGGEST.find(o => o.k === envPick), S = envSuggestion(envPick, by) || envSuggestion('balanced', by), ss = envShares(S.M);
+    const mixTxt = CORE.filter(c => S.mix[c] > 0).map(c => `${c.toLowerCase()} ${S.mix[c]}%`).join(', ');
+    $('envBalSub').textContent = `${pick.label}: ${mixTxt}. ${S.extra || pick.why} Risk by environment: ${ENVS.map(k => `${k.toLowerCase()} ${Math.round(ss[k] * 100)}%`).join(', ')}.`;
     const bb = $('envBalBars'); bb.textContent = '';
     const liqT = BUCKETS.filter(b => b !== 'Property').reduce((a, b) => a + by[b], 0);
-    for (const [lab, o] of [['Now', Object.fromEntries(BUCKETS.map(b => [b, b === 'Property' ? 0 : by[b] / (liqT || 1)]))], ['Balanced', Object.fromEntries(BUCKETS.map(b => [b, (B.mix[b] || 0) / 100]))]]) {
+    const nowW = Object.fromEntries(BUCKETS.map(b => [b, b === 'Property' || !liqT ? 0 : by[b] / liqT]));
+    const sugW = Object.fromEntries(BUCKETS.map(b => [b, (S.mix[b] || 0) / 100]));
+    for (const [lab, o] of [['Now', nowW], ['Suggested', sugW]]) {
       const row = document.createElement('div'); row.className = 'sc-arow';
       const l = document.createElement('span'); l.textContent = lab;
       const bar = document.createElement('span'); bar.className = 'sc-abar';
@@ -3044,8 +3087,36 @@
       row.append(l, bar, a); bb.append(row);
     }
     const lg = $('envBalLegend'); lg.textContent = '';
-    BUCKETS.forEach((b, ix) => { if (b === 'Property' || (by[b] < 0.5 && !(B.mix[b] > 0))) return; const s = document.createElement('span'); const d = document.createElement('i'); d.className = 'bk-' + ix; s.append(d, b); lg.append(s); });
-    $('envUse').onclick = () => { POL.targets = Object.fromEntries(BUCKETS.map(b => [b, B.mix[b] || 0])); savePrefs(); location.hash = '#plan'; window.scrollTo(0, 0); showBanner('Target allocation set to the environment-balanced mix. Your cash reserve is kept aside; review the trades below.', 'info'); };
+    BUCKETS.forEach((b, ix) => { if (b === 'Property' || (nowW[b] < 0.002 && !(S.mix[b] > 0))) return; const s = document.createElement('span'); const d = document.createElement('i'); d.className = 'bk-' + ix; s.append(d, b); lg.append(s); });
+    // now vs suggested, environment by environment (investable money, excluding property)
+    const ret = (w, q) => BUCKETS.reduce((a, b) => a + (w[b] || 0) * (q.s[b] || 0), 0);
+    const nowBy = Object.fromEntries(BUCKETS.map(b => [b, b === 'Property' ? 0 : by[b]])), Mn = riskModel(nowBy, 0);
+    const cmp = $('envCmp'); cmp.textContent = '';
+    const hr2 = document.createElement('tr'); ['On your investable money', 'Now', 'Suggested', 'Difference'].forEach(t => { const th = document.createElement('th'); th.textContent = t; hr2.append(th); });
+    const th2 = document.createElement('thead'); th2.append(hr2); cmp.append(th2);
+    const tb2 = document.createElement('tbody');
+    const pct = v => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1)}%`;
+    const rowsC = QUADS.map(q => [q.name, ret(nowW, q), ret(sugW, q)]);
+    const worstNow = Math.min(...rowsC.map(r => r[1])), worstSug = Math.min(...rowsC.map(r => r[2]));
+    rowsC.push(['Worst environment', worstNow, worstSug]);
+    for (const [name, a, b2] of rowsC) {
+      const tr = document.createElement('tr'); if (name === 'Worst environment') tr.className = 'sc-sum';
+      [name, pct(a), pct(b2), `${b2 - a >= 0 ? '+' : '−'}${Math.abs(b2 - a).toFixed(1)} pts`].forEach((t, ix) => { const td = document.createElement('td'); td.textContent = t; if (ix === 3) td.className = b2 - a >= 0.05 ? 'rk-pos' : b2 - a <= -0.05 ? 'rk-neg' : ''; tr.append(td); });
+      tb2.append(tr);
+    }
+    if (Mn) for (const [name, a, b2, isVol] of [['Expected return (long run)', Mn.mu * 100, S.M.mu * 100, false], ['Volatility', Mn.vol * 100, S.M.vol * 100, true]]) {
+      const tr = document.createElement('tr');
+      [name, a.toFixed(1) + '%', b2.toFixed(1) + '%', `${b2 - a >= 0 ? '+' : '−'}${Math.abs(b2 - a).toFixed(1)} pts`].forEach((t, ix) => { const td = document.createElement('td'); td.textContent = t; if (ix === 3) { const good = isVol ? b2 < a : b2 > a; td.className = Math.abs(b2 - a) < 0.05 ? '' : good ? 'rk-pos' : 'rk-neg'; } tr.append(td); });
+      tb2.append(tr);
+    }
+    cmp.append(tb2);
+    $('envUse').onclick = () => { POL.targets = Object.fromEntries(BUCKETS.map(b => [b, S.mix[b] || 0])); savePrefs(); location.hash = '#plan'; window.scrollTo(0, 0); showBanner(`Target allocation set to “${pick.label}”. Your cash reserve is kept aside; review the trades below.`, 'info'); };
+    $('envScen').onclick = () => {
+      const start = Object.fromEntries(BUCKETS.map(b => [b, S.mix[b] || 0]));
+      const sc = cleanScenario({ name: pick.label, start, end: start, glide: 0, assume: Object.fromEntries(BUCKETS.map(b => [b, SC_DEFAULTS[b].slice()])), monthly: null, growth: 0, rebalance: true, holdProperty: true });
+      sc._tmp = 'tmp' + Date.now(); scenarios.push(sc); scSel = sc._tmp; scDirty = true; location.hash = '#scenarios'; window.scrollTo(0, 0);
+      showBanner(`Added “${pick.label}” as a scenario. Save it to keep it.`, 'info');
+    };
     $('envNote').textContent = 'Assignments follow Bridgewater’s published framing: shares like rising growth and falling inflation; bonds like falling growth and falling inflation; gold likes falling growth and rising inflation; commodities and property like rising growth and inflation. Bitcoin is treated as a growth-and-liquidity asset. Risk uses the Scenarios assumptions (bonds at 6% volatility, i.e. intermediate maturity), which is why a balanced mix holds a lot of bonds; All Weather itself uses longer bonds and inflation-linked bonds. Quadrant returns are rough one-year analogues, not forecasts.';
   }
 

@@ -373,3 +373,9 @@ dialog.wide{width:min(760px,calc(100vw - 32px))}
 .rs-heat td.dark{color:#fff}
 .rs-heat td.self{background:var(--surface-2);color:var(--muted)}
 @media (max-width:640px){.rg-grid{grid-template-columns:1fr}.env-row{grid-template-columns:110px 1fr 46px}}
+.env-opts{margin:4px 0 10px;flex-wrap:wrap}
+.env-opts .chip{border-left-width:1px}
+.env-opts .chip[disabled]{opacity:.45;cursor:not-allowed}
+.env-why{font-size:14px;margin:6px 0 10px}
+.env-table td.env-best{font-weight:650}
+#envBalBars .sc-arow{grid-template-columns:72px 1fr auto}

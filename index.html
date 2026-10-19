@@ -6,8 +6,8 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://api.airtable.com; form-action 'none'; base-uri 'none'; object-src 'none'">
 <meta name="referrer" content="no-referrer">
 <title>Holdings</title>
-<link rel="stylesheet" href="styles.css?v=2026-10-19b">
-<script src="app.js?v=2026-10-19b" defer></script>
+<link rel="stylesheet" href="styles.css?v=2026-10-19c">
+<script src="app.js?v=2026-10-19c" defer></script>
 </head>
 <body>
 <div class="wrap">
@@ -196,11 +196,16 @@
         <div class="env-bars" id="envBars"></div>
         <h3 class="mv-h">How each environment would hit you</h3>
         <div class="proj-table-wrap"><table class="proj-table env-table" id="envQuad"></table></div>
-        <h3 class="mv-h">An environment-balanced mix</h3>
-        <p class="hint" id="envBalSub"></p>
+        <h3 class="mv-h">Suggested allocations</h3>
+        <div class="sc-tabs env-opts" id="envOpts" role="group" aria-label="Suggest an allocation"></div>
+        <p class="rk-verdict env-why" id="envBalSub"></p>
         <div class="sc-alloc-bars" id="envBalBars"></div>
         <div class="cp-legend" id="envBalLegend"></div>
-        <div class="mv-actions"><button class="btn primary" type="button" id="envUse">Use as my target allocation</button></div>
+        <div class="proj-table-wrap"><table class="proj-table env-table" id="envCmp"></table></div>
+        <div class="mv-actions">
+          <button class="btn primary" type="button" id="envUse">Use as my target allocation</button>
+          <button class="btn" type="button" id="envScen">Compare in Scenarios</button>
+        </div>
         <p class="hint" id="envNote"></p>
       </div>
     </div>
