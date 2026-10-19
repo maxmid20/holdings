@@ -116,6 +116,18 @@ The **Projection** panel projects every holding forward, month by month:
 
 Projection settings (years, default return, inflation) are saved only in your browser. The owner filter applies, so you can project just your own holdings or a partner's.
 
+## Rebalance what-if
+
+At the top of the **Scenarios** tab, list manual moves such as "$20,000 from Checking to Gold coins". The destination can be another holding or a new position in any bucket. For the moves together, it shows:
+
+- **Last 12 months**: what the moves would have earned or cost, e.g. 20k × (gold 40% − cash 4%) = +$7,200, and your portfolio's 12-month return before → after.
+- **Last 5 years**: the total difference over five years using each holding's 5-year annualised return, compounded.
+- **Going forward**: the change in expected yearly return, using each holding's `Expected return %` or, if blank, the long-run assumption for its asset class (from the Scenarios defaults).
+- A per-move table, your asset-class mix now vs after, and a warning if the moves change your emergency-fund months.
+- **Project this mix forward** turns the after-moves mix into a scenario.
+
+Hindsight uses trailing returns in each holding's own currency. Cash uses today's interest rate for the whole period. A new position uses your existing holdings in that bucket; if there are none, there's no hindsight figure. A move bigger than what's left in the source is capped. Taxes, fees and trading costs are ignored. Moves are saved in this browser.
+
 ## Scenarios
 
 The **Scenarios** tab (or `#scenarios`) tests different allocations against each other, starting from what you hold today.

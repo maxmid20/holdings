@@ -1999,6 +1999,7 @@
     $('scYears').value = P.years; $('scInfl').value = P.infl; $('scReal').checked = P.real;
     if (scSel !== 'asis' && !scCur()) scSel = 'asis';
     renderScenarioTabs(); renderEditor(); scRun();
+    renderMoves();
     $('scStore').textContent = mode === 'airtable' ? (scTableOk ? 'Scenarios are saved to your Airtable “Scenarios” table.' : 'Scenarios are saved in this browser. Add a “Scenarios” table (Name, Config) to your base to sync them.') : 'Scenarios are saved in this browser.';
     $('scDel').hidden = $('scDup').hidden = $('scSave').hidden = !scCur();
   }
@@ -2034,6 +2035,209 @@
   let scResizeT = 0;
   window.addEventListener('resize', () => { if (!$('scView').hidden) { clearTimeout(scResizeT); scResizeT = setTimeout(scRun, 150); } });
   window.addEventListener('beforeunload', e => { if (scDirty && !$('scView').hidden) { e.preventDefault(); e.returnValue = ''; } });
+
+  // ---------- Rebalance what-if ----------
+  // A list of manual moves ("$20k from Checking to Gold"). Hindsight: what each move would have earned over the last
+  // 12 months / 5 years, using each holding's trailing returns (cash: its interest rate). Forward: the change in expected
+  // return, using each holding's Expected return or, if blank, the long-run assumption for its asset mix.
+  // Moves are kept in this browser's preferences.
+  const MV = prefs.moves = Array.isArray(prefs.moves) ? prefs.moves.filter(m => m && typeof m === 'object').slice(0, 20) : [];
+  const has = v => v !== null && v !== undefined && Number.isFinite(Number(v));
+  const mvAssets = () => visible().filter(i => i.kind === 'asset' && i.value > 0 && !i.noFx);
+  const r12Of = i => retOf(i).r;
+  const r5Of = i => has(i.ret5) ? i.ret5 : (mainBucket(i) === 'Cash' && has(i.rate) ? i.rate : null);
+  const assumedRet = mix => { let s = 0, t = 0; for (const [c, w] of Object.entries(mix)) { s += w * SC_DEFAULTS[bucketOf(c)][0]; t += w; } return t ? s / t : 0; };
+  const fwdOf = i => has(i.rate) ? i.rate : assumedRet(mixFor(i));
+  // a "new position" in a bucket uses the value-weighted figures of the holdings you already have in that bucket
+  function newPos(bucket, assets) {
+    const inB = assets.filter(i => mainBucket(i) === bucket);
+    const avg = f => { const h = inB.filter(i => f(i) !== null); const w = h.reduce((a, i) => a + i.value, 0); return w ? h.reduce((a, i) => a + i.value * f(i), 0) / w : null; };
+    return { id: 'b:' + bucket, name: 'New ' + bucket.toLowerCase() + ' position', value: 0, virtual: true, bucket,
+      r12: avg(r12Of), r5: avg(r5Of), fwd: has(avg(i => has(i.rate) ? i.rate : null)) ? avg(i => has(i.rate) ? i.rate : null) : SC_DEFAULTS[bucket][0], mix: { [bucket]: 100 } };
+  }
+  const posOf = (id, assets) => {
+    if (typeof id === 'string' && id.startsWith('b:') && BUCKETS.includes(id.slice(2))) return newPos(id.slice(2), assets);
+    const i = assets.find(a => a.id === id); if (!i) return null;
+    return { id: i.id, name: i.name, value: i.value, r12: r12Of(i), r5: r5Of(i), fwd: fwdOf(i), mix: mixFor(i), bucket: mainBucket(i), item: i };
+  };
+  // apply all moves; amounts are capped at what's left in the source after earlier moves
+  function mvCompute() {
+    const assets = mvAssets(), left = Object.fromEntries(assets.map(i => [i.id, i.value]));
+    const rows = MV.map(m => {
+      const from = posOf(m.from, assets), to = posOf(m.to, assets), want = Math.max(0, Number(m.amount) || 0);
+      if (!from || from.virtual || !to || from.id === to.id || !want) return { m, from, to, amt: 0, want };
+      const amt = Math.min(want, Math.max(0, left[from.id])); left[from.id] -= amt; if (!to.virtual) left[to.id] += amt;
+      const d12 = from.r12 !== null && to.r12 !== null ? amt * (to.r12 - from.r12) / 100 : null;
+      const d5 = from.r5 !== null && to.r5 !== null ? amt * (Math.pow(1 + to.r5 / 100, 5) - Math.pow(1 + from.r5 / 100, 5)) : null;
+      return { m, from, to, amt, want, d12, d5, dF: amt * (to.fwd - from.fwd) / 100 };
+    });
+    const total = assets.reduce((a, i) => a + i.value, 0);
+    // portfolio-level figures before and after (12-mo counts missing as 0%, like the Returns panel; 5-yr and forward
+    // weight only holdings with a figure)
+    const pts12 = assets.reduce((a, i) => a + i.value * (r12Of(i) || 0), 0);
+    const w5 = assets.filter(i => r5Of(i) !== null), v5 = w5.reduce((a, i) => a + i.value, 0), p5 = w5.reduce((a, i) => a + i.value * r5Of(i), 0);
+    const pF = assets.reduce((a, i) => a + i.value * fwdOf(i), 0);
+    const act = rows.filter(r => r.amt > 0);
+    let a12 = pts12, a5 = p5, a5v = v5, aF = pF;
+    for (const r of act) {
+      a12 += r.amt * ((r.to.r12 || 0) - (r.from.r12 || 0));
+      if (r.from.r5 !== null) { a5 -= r.amt * r.from.r5; a5v -= r.amt; }
+      if (r.to.r5 !== null) { a5 += r.amt * r.to.r5; a5v += r.amt; }
+      aF += r.amt * (r.to.fwd - r.from.fwd);
+    }
+    // bucket mix before / after
+    const by = (vals, extra) => {
+      const o = Object.fromEntries(BUCKETS.map(b => [b, 0]));
+      for (const i of assets) for (const [c, w] of Object.entries(mixFor(i))) o[bucketOf(c)] += vals[i.id] * w / 100;
+      for (const [b, v] of Object.entries(extra)) o[b] += v;
+      return o;
+    };
+    const extra = {}; for (const r of act) if (r.to.virtual) extra[r.to.bucket] = (extra[r.to.bucket] || 0) + r.amt;
+    const before = by(Object.fromEntries(assets.map(i => [i.id, i.value])), {}), after = by(left, extra);
+    return { assets, rows, act, total, left, extra, before, after,
+      r12: [pts12 / total, a12 / total], r5: v5 ? [p5 / v5, a5v ? a5 / a5v : null] : null, fwd: [pF / total, aF / total] };
+  }
+  // months of emergency cover before / after (same rules as the Emergency fund card)
+  function mvEf(R) {
+    const ex = expView().filter(e => e.monthly !== null), ess = ex.filter(e => e.essential).reduce((a, e) => a + e.monthly, 0);
+    const base = ess || ex.reduce((a, e) => a + e.monthly, 0); if (!base) return null;
+    const ids = new Set(efHoldings().map(i => i.id));
+    const setAside = asides.reduce((t, a) => t + (a.amount === null ? 0 : (conv(a.amount, a.currency) || 0)), 0);
+    const cashNow = R.assets.filter(i => ids.has(i.id)).reduce((a, i) => a + i.value, 0);
+    let cashAfter = R.assets.filter(i => ids.has(i.id)).reduce((a, i) => a + R.left[i.id], 0);
+    if (EF.mode !== 'custom') cashAfter += R.extra.Cash || 0;
+    return [Math.max(0, cashNow - setAside) / base, Math.max(0, cashAfter - setAside) / base];
+  }
+  const signed = n => (n > 0.5 ? '+' : n < -0.5 ? '−' : '') + fmt(Math.abs(n));
+  const pctArrow = (a, b, unit = '') => `${a.toFixed(1)}%${unit} → ${b.toFixed(1)}%${unit}`;
+  function mvOptions(sel, assets, withNew, value) {
+    sel.textContent = '';
+    const groups = {};
+    for (const i of assets) (groups[mainBucket(i)] = groups[mainBucket(i)] || []).push(i);
+    for (const g of ['Cash', ...BUCKETS.filter(b => b !== 'Cash'), 'Multi-asset'].filter(g => groups[g])) {
+      const og = document.createElement('optgroup'); og.label = g === 'Multi-asset' ? 'Multi-asset funds' : g;
+      for (const i of groups[g].sort((a, b) => b.value - a.value)) { const o = document.createElement('option'); o.value = i.id; o.textContent = `${i.name} · ${fmtShort(i.value)}`; og.append(o); }
+      sel.append(og);
+    }
+    if (withNew) {
+      const og = document.createElement('optgroup'); og.label = 'New position';
+      for (const b of BUCKETS) { const o = document.createElement('option'); o.value = 'b:' + b; o.textContent = 'New ' + b.toLowerCase() + ' position'; og.append(o); }
+      sel.append(og);
+    }
+    if (value && [...sel.options].some(o => o.value === value)) sel.value = value;
+    else if (value) { const o = document.createElement('option'); o.value = value; o.textContent = '(holding not found)'; sel.prepend(o); sel.value = value; }
+  }
+  function renderMoves() {
+    const sec = $('mvSection');
+    if (mode === 'locked') { sec.hidden = true; return; }
+    const R = mvCompute(); sec.hidden = !R.assets.length; if (!R.assets.length) return;
+    const list = $('mvList');
+    const typing = document.activeElement && document.activeElement.classList.contains('mv-amt') && list.contains(document.activeElement);
+    if (!typing) {          // don't rebuild while someone is typing an amount
+      list.textContent = '';
+      if (!MV.length) { const e = document.createElement('div'); e.className = 'mv-empty'; e.textContent = 'Add a move, e.g. part of your cash into gold, to see what it would have earned.'; list.append(e); }
+      MV.forEach((m, k) => {
+        const row = document.createElement('div'); row.className = 'mv-row';
+        const amt = document.createElement('input'); amt.className = 'mv-amt'; amt.type = 'number'; amt.min = '0'; amt.step = 'any'; amt.inputMode = 'decimal';
+        amt.placeholder = 'Amount (' + dispCur() + ')'; amt.setAttribute('aria-label', `Move ${k + 1} amount in ${dispCur()}`); amt.value = m.amount || '';
+        amt.oninput = () => { m.amount = Math.max(0, Number(amt.value) || 0); savePrefs(); renderMoves(); };
+        const w1 = document.createElement('span'); w1.className = 'mv-w'; w1.textContent = 'from';
+        const from = document.createElement('select'); from.className = 'mv-from'; from.setAttribute('aria-label', `Move ${k + 1} from`); mvOptions(from, R.assets, false, m.from);
+        const w2 = document.createElement('span'); w2.className = 'mv-w'; w2.textContent = 'to';
+        const to = document.createElement('select'); to.className = 'mv-to'; to.setAttribute('aria-label', `Move ${k + 1} to`); mvOptions(to, R.assets, true, m.to);
+        from.onchange = () => { m.from = from.value; savePrefs(); renderMoves(); };
+        to.onchange = () => { m.to = to.value; savePrefs(); renderMoves(); };
+        const x = document.createElement('button'); x.type = 'button'; x.className = 'icon-btn mv-x'; x.textContent = '×'; x.setAttribute('aria-label', `Remove move ${k + 1}`);
+        x.onclick = () => { MV.splice(k, 1); savePrefs(); renderMoves(); };
+        row.append(amt, w1, from, w2, to, x);
+        const r = R.rows[k];
+        const msg = !r.from ? 'The source holding isn’t in this view.' : !r.to ? 'The destination holding isn’t in this view.' : r.from.id === r.to.id ? 'Pick a different destination.'
+          : r.want > r.amt + 0.5 ? `Only ${fmt(r.amt)} is available in ${r.from.name}${r.amt < r.from.value - 0.5 ? ' after earlier moves' : ''}; that’s what’s counted.` : '';
+        if (msg) { const w = document.createElement('div'); w.className = 'mv-max'; w.textContent = msg; row.append(w); }
+        list.append(row);
+      });
+    } else {
+      // refresh just the warnings under each row
+      [...list.querySelectorAll('.mv-row')].forEach((row, k) => {
+        const r = R.rows[k]; if (!r) return; let w = row.querySelector('.mv-max');
+        const msg = r.from && r.to && r.from.id !== r.to.id && r.want > r.amt + 0.5 ? `Only ${fmt(r.amt)} is available in ${r.from.name}; that’s what’s counted.` : '';
+        if (!msg) { if (w) w.remove(); return; }
+        if (!w) { w = document.createElement('div'); w.className = 'mv-max'; row.append(w); } w.textContent = msg;
+      });
+    }
+    $('mvClear').hidden = !MV.length;
+    $('mvOut').hidden = !R.act.length;
+    $('mvNote').textContent = 'Hindsight uses each holding’s trailing returns in its own currency (currency moves aren’t counted). Cash uses today’s interest rate for the whole period, though real rates varied. A new position uses your existing holdings in that bucket. Ignores taxes, fees and trading costs. Past returns don’t predict future ones. Moves are saved in this browser.';
+    if (!R.act.length) return;
+    const moved = R.act.reduce((a, r) => a + r.amt, 0);
+    const s12 = R.act.filter(r => r.d12 !== null), s5 = R.act.filter(r => r.d5 !== null);
+    const g12 = s12.reduce((a, r) => a + r.d12, 0), g5 = s5.reduce((a, r) => a + r.d5, 0), gF = R.act.reduce((a, r) => a + r.dF, 0);
+    const tone = (el, n) => { el.classList.toggle('pos', n > 0.5); el.classList.toggle('neg', n < -0.5); };
+    $('mv12').textContent = s12.length ? signed(g12) : 'no data'; tone($('mv12'), s12.length ? g12 : 0);
+    const nod = n => `${n} move${n > 1 ? 's' : ''} without data, not counted`;
+    $('mv12Sub').textContent = (!s12.length ? 'No 12-month figures for these holdings' : s12.length < R.act.length ? `For the moves with data · ${nod(R.act.length - s12.length)}` : `Portfolio return ${pctArrow(...R.r12)}`) + '.';
+    $('mv5').textContent = s5.length ? signed(g5) : 'no data'; tone($('mv5'), s5.length ? g5 : 0);
+    $('mv5Sub').textContent = (!s5.length ? 'No 5-year figures for these holdings' : s5.length < R.act.length ? `Total over 5 years · ${nod(R.act.length - s5.length)}` : `Total over 5 years · ${R.r5 && R.r5[1] !== null ? pctArrow(R.r5[0], R.r5[1], '/yr') : ''}`) + '.';
+    $('mvFwd').textContent = signed(gF) + '/yr'; tone($('mvFwd'), gF);
+    $('mvFwdSub').textContent = `Expected return ${pctArrow(...R.fwd)} · moving ${fmt(moved)} (${Math.round(moved / R.total * 100)}% of assets).`;
+    // per-move table
+    const tbl = $('mvTable'); tbl.textContent = '';
+    const hr = document.createElement('tr');
+    ['Move', 'Amount', '12-mo return', '12-mo gain', '5-yr return', '5-yr gain', 'Expected'].forEach(t => { const th = document.createElement('th'); th.textContent = t; hr.append(th); });
+    const th = document.createElement('thead'); th.append(hr); tbl.append(th);
+    const tb = document.createElement('tbody');
+    const f = v => v === null ? '—' : v.toFixed(1) + '%';
+    for (const r of R.act) {
+      const tr = document.createElement('tr');
+      [`${r.from.name} → ${r.to.name}`, fmt(r.amt), `${f(r.from.r12)} → ${f(r.to.r12)}`, r.d12 === null ? '—' : signed(r.d12),
+        `${f(r.from.r5)} → ${f(r.to.r5)}`, r.d5 === null ? '—' : signed(r.d5), `${f(r.from.fwd)} → ${f(r.to.fwd)}`].forEach((t, ix) => {
+        const td = document.createElement('td'); td.textContent = t; if (!ix) td.className = 'mv-move'; tr.append(td);
+      });
+      tb.append(tr);
+    }
+    if (R.act.length > 1) {
+      const tr = document.createElement('tr'); tr.className = 'ret-total';
+      ['Total', fmt(moved), '', s12.length ? signed(g12) : '—', '', s5.length ? signed(g5) : '—', signed(gF) + '/yr'].forEach(t => { const td = document.createElement('td'); td.textContent = t; tr.append(td); });
+      tb.append(tr);
+    }
+    tbl.append(tb);
+    // mix bars
+    const bars = $('mvBars'); bars.textContent = '';
+    const tot = o => Object.values(o).reduce((a, b) => a + b, 0);
+    for (const [lab, o] of [['Now', R.before], ['After', R.after]]) {
+      const t = tot(o), row = document.createElement('div'); row.className = 'sc-arow';
+      const l = document.createElement('span'); l.textContent = lab;
+      const bar = document.createElement('span'); bar.className = 'sc-abar';
+      BUCKETS.forEach((b, ix) => { const w = t ? o[b] / t : 0; if (w < 0.002) return; const seg = document.createElement('i'); seg.className = 'bk-' + ix; seg.style.width = (w * 100) + '%'; seg.title = `${b} ${(w * 100).toFixed(1)}% · ${fmt(o[b])}`; bar.append(seg); });
+      const a = document.createElement('span'); a.className = 'amt'; a.textContent = fmtShort(t);
+      row.append(l, bar, a); bars.append(row);
+    }
+    const lg = $('mvLegend'); lg.textContent = '';
+    BUCKETS.forEach((b, ix) => { if (R.before[b] < 0.5 && R.after[b] < 0.5) return; const s = document.createElement('span'); const d = document.createElement('i'); d.className = 'bk-' + ix; s.append(d, b); lg.append(s); });
+    const tb0 = tot(R.before), ta = tot(R.after);
+    const ch = BUCKETS.filter(b => Math.abs(R.before[b] / tb0 - R.after[b] / ta) >= 0.0005).map(b => `${b} ${(R.before[b] / tb0 * 100).toFixed(1)}% → ${(R.after[b] / ta * 100).toFixed(1)}%`);
+    $('mvChanges').textContent = ch.length ? ch.join(' · ') : 'No change in your asset-class mix (the moves stay within the same buckets).';
+    const ef = mvEf(R), warns = [];
+    if (ef && Math.abs(ef[0] - ef[1]) > 0.05) warns.push(`Emergency fund: ${fmtMonths(ef[0])} → ${fmtMonths(ef[1])} months of cover${ef[1] < 3 ? ', below the common 3–6 month guideline' : ''}.`);
+    $('mvWarn').textContent = warns.join(' '); $('mvWarn').hidden = !warns.length;
+    $('mvWarn').classList.toggle('warn-text', !!(ef && ef[1] < 3));
+  }
+  $('mvAdd').onclick = () => {
+    const assets = mvAssets(); if (!assets.length) return;
+    const cash = assets.filter(i => mainBucket(i) === 'Cash').sort((a, b) => b.value - a.value)[0] || [...assets].sort((a, b) => b.value - a.value)[0];
+    const gold = assets.find(i => mainBucket(i) === 'Gold' && i.id !== cash.id);
+    MV.push({ from: cash.id, to: gold ? gold.id : 'b:Gold', amount: 0 }); savePrefs(); renderMoves();
+    const ins = $('mvList').querySelectorAll('.mv-amt'); if (ins.length) ins[ins.length - 1].focus();
+  };
+  $('mvClear').onclick = () => { MV.splice(0); savePrefs(); renderMoves(); };
+  $('mvProject').onclick = () => {
+    const R = mvCompute(), liq = BUCKETS.filter(b => b !== 'Property'), t = liq.reduce((a, b) => a + R.after[b], 0); if (!t) return;
+    const start = Object.fromEntries(liq.map(b => [b, Math.round(R.after[b] / t * 1000) / 10]));
+    const sc = cleanScenario({ name: 'After my moves', start, end: start, glide: 0, assume: Object.fromEntries(BUCKETS.map(b => [b, SC_DEFAULTS[b].slice()])), monthly: null, growth: 0, rebalance: true, holdProperty: true });
+    sc._tmp = 'tmp' + Date.now(); scenarios.push(sc); scSel = sc._tmp; scDirty = true; renderScenarios();
+    $('scTabs').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    showBanner('Added “After my moves” as a scenario. Save it to keep it.', 'info');
+  };
 
   // ---------- Start ----------
   if (mode === 'local') { fx = localFx(); loadScenarios(); }

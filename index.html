@@ -6,8 +6,8 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://api.airtable.com; form-action 'none'; base-uri 'none'; object-src 'none'">
 <meta name="referrer" content="no-referrer">
 <title>Holdings</title>
-<link rel="stylesheet" href="styles.css?v=2026-10-18m">
-<script src="app.js?v=2026-10-18m" defer></script>
+<link rel="stylesheet" href="styles.css?v=2026-10-18n">
+<script src="app.js?v=2026-10-18n" defer></script>
 </head>
 <body>
 <div class="wrap">
@@ -135,6 +135,32 @@
   </div>
 
   <div id="scView" hidden>
+    <div class="section" id="mvSection">
+      <div class="section-head"><h2>Rebalance what-if</h2><span class="hint">Move money between holdings and see what it would have earned</span></div>
+      <div class="card">
+        <div class="mv-list" id="mvList"></div>
+        <div class="mv-actions">
+          <button class="btn" type="button" id="mvAdd">+ Add move</button>
+          <button class="btn" type="button" id="mvClear">Clear all</button>
+        </div>
+        <div id="mvOut" hidden>
+          <div class="mv-stats">
+            <div><div class="label">Last 12 months</div><div class="ret-big" id="mv12"></div><div class="hint" id="mv12Sub"></div></div>
+            <div><div class="label">Last 5 years</div><div class="ret-big" id="mv5"></div><div class="hint" id="mv5Sub"></div></div>
+            <div><div class="label">Going forward</div><div class="ret-big" id="mvFwd"></div><div class="hint" id="mvFwdSub"></div></div>
+          </div>
+          <div class="proj-table-wrap"><table class="proj-table mv-table" id="mvTable"></table></div>
+          <h3 class="mv-h">Your mix</h3>
+          <div class="sc-alloc-bars" id="mvBars"></div>
+          <div class="cp-legend" id="mvLegend"></div>
+          <p class="hint" id="mvChanges"></p>
+          <p class="hint warn-text" id="mvWarn" hidden></p>
+          <div class="mv-actions"><button class="btn primary" type="button" id="mvProject">Project this mix forward</button></div>
+        </div>
+        <p class="hint" id="mvNote"></p>
+      </div>
+    </div>
+
     <div class="section">
       <div class="section-head"><h2>Scenarios</h2><span class="hint">Model allocations, glide paths and return assumptions</span></div>
       <div class="sc-bar">
