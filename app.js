@@ -1227,9 +1227,9 @@
     if (locked) {
       ownerView = '';
       ['totAssets', 'totDebts', 'totNet'].forEach(id => { $(id).textContent = '—'; });
-      $('mixSection').hidden = true; $('xpSection').hidden = true; $('cpSection').hidden = true; $('retSection').hidden = true; $('efSection').hidden = true; $('projSection').hidden = true; $('projTip').hidden = true; $('fxNote').hidden = true;
+      $('mixSection').hidden = true; $('rkSection').hidden = true; $('xpSection').hidden = true; $('cpSection').hidden = true; $('retSection').hidden = true; $('efSection').hidden = true; $('projSection').hidden = true; $('projTip').hidden = true; $('fxNote').hidden = true;
       [...$('projChart').querySelectorAll('svg')].forEach(n => n.remove()); $('projTable').textContent = ''; $('projHeadline').textContent = '';
-      ['assets', 'debts', 'assetMix', 'lookBar', 'lookTable', 'mixHint', 'fName', 'fNote', 'fVal', 'fAcct', 'fFund', 'fOwner', 'fTicker', 'fShares', 'fRate', 'fMonthly', 'fYears', 'fWO', 'debtPlan', 'fRet12', 'fRet5', 'fRetHint', 'cpList', 'cpUninsured', 'cpUninsuredSub', 'cpTop', 'cpTopSub', 'cpNote', 'fInst', 'instList', 'xpCountry', 'xpCurrency', 'xpCountryNote', 'xpSpend', 'xpNote', 'retTable', 'retAll', 'retAllSub', 'retFunds', 'retFundsSub', 'retNote', 'efList', 'efCalc', 'asName', 'asAmt', 'asNote', 'efMonths', 'efUnit', 'efSub', 'efAll', 'efBar', 'efVerdict', 'efFundInfo', 'efPickList', 'eName', 'eAmt', 'eOwner', 'eNote', 'tidyList', 'fxList', 'fxText', 'acctList', 'ownerList', 'fundList']
+      ['assets', 'debts', 'assetMix', 'lookBar', 'lookTable', 'mixHint', 'fName', 'fNote', 'fVal', 'fAcct', 'fFund', 'fOwner', 'fTicker', 'fShares', 'fRate', 'fMonthly', 'fYears', 'fWO', 'debtPlan', 'fRet12', 'fRet5', 'fRetHint', 'rkVerdict', 'rkProfile', 'rkProfileSub', 'rkVar', 'rkVarSub', 'rkDiv', 'rkDivSub', 'rkBars', 'rkLegend', 'rkRiskNote', 'rkStress', 'rkScore', 'cpList', 'cpUninsured', 'cpUninsuredSub', 'cpTop', 'cpTopSub', 'cpNote', 'fInst', 'instList', 'xpCountry', 'xpCurrency', 'xpCountryNote', 'xpSpend', 'xpNote', 'retTable', 'retAll', 'retAllSub', 'retFunds', 'retFundsSub', 'retNote', 'efList', 'efCalc', 'asName', 'asAmt', 'asNote', 'efMonths', 'efUnit', 'efSub', 'efAll', 'efBar', 'efVerdict', 'efFundInfo', 'efPickList', 'eName', 'eAmt', 'eOwner', 'eNote', 'tidyList', 'fxList', 'fxText', 'acctList', 'ownerList', 'fundList']
         .forEach(id => { const el = $(id); if (el.tagName === 'INPUT') el.value = ''; else el.textContent = ''; });
       return;
     }
@@ -1241,7 +1241,7 @@
     $('tidyBtn').hidden = !items.some(i => i.kind === 'asset');
     renderFxNote(vis);
     showView();
-    renderMix(); renderLookThrough(); renderExposure(); renderCounterparty(); renderReturns(); renderEmergency(); renderProjection(); renderList('asset'); renderList('debt'); renderDebtPlan();
+    renderMix(); renderLookThrough(); renderRisk(); renderExposure(); renderCounterparty(); renderReturns(); renderEmergency(); renderProjection(); renderList('asset'); renderList('debt'); renderDebtPlan();
   }
 
   // Generic busy wrapper for form buttons
@@ -1921,21 +1921,24 @@
     // table
     const tbl = $('scTable'); tbl.textContent = '';
     const hr = document.createElement('tr');
-    ['Scenario', `In ${years} yrs`, 'vs as is', 'Expected return', 'Range (10–90%)'].forEach(t => { const th = document.createElement('th'); th.textContent = t; hr.append(th); });
+    ['Scenario', `In ${years} yrs`, 'vs as is', 'Expected return', 'Range (10–90%)', 'Volatility', 'Worst stress'].forEach(t => { const th = document.createElement('th'); th.textContent = t; hr.append(th); });
     const th = document.createElement('thead'); th.append(hr); tbl.append(th);
     const tb = document.createElement('tbody'), asisEnd = asis[asis.length - 1].nw;
-    const row = (cls, label, end, ret, range, isSel) => {
+    const debtNow = visible().filter(i => i.kind === 'debt' && i.value > 0 && !i.noFx).reduce((a, i) => a + i.value, 0);
+    const riskCells = M => { if (!M || M.volNW === null) return ['—', '—']; const w = Math.min(...M.stress.map(t => t.loss)); return [(M.volNW * 100).toFixed(1) + '%', w < 0 ? '−' + Math.round(-w / M.nw * 100) + '%' : '0%']; };
+    const row = (cls, label, end, ret, range, isSel, M) => {
       const tr = document.createElement('tr'); if (isSel) tr.className = 'on';
       const n = document.createElement('td'); const sw = document.createElement('i'); sw.className = 'sw ' + cls; n.append(sw, label); tr.append(n);
-      [fmt(end), cls === 'ln-asis' ? '—' : (end >= asisEnd ? '+' : '−') + fmt(Math.abs(end - asisEnd)), ret, range].forEach(t => { const td = document.createElement('td'); td.textContent = t; tr.append(td); });
+      [fmt(end), cls === 'ln-asis' ? '—' : (end >= asisEnd ? '+' : '−') + fmt(Math.abs(end - asisEnd)), ret, range, ...riskCells(M)].forEach(t => { const td = document.createElement('td'); td.textContent = t; tr.append(td); });
       tb.append(tr);
     };
-    row('ln-asis', 'As is', asisEnd, 'your holdings’ own rates', '—', !sel);
+    row('ln-asis', 'As is', asisEnd, 'your holdings’ own rates', '—', !sel, riskModel(bucketValues(visible()), debtNow));
     for (const r of runs) {
       const a0 = r.pts[0].alloc, a1 = r.pts[r.pts.length - 1].alloc;
       const r0 = blendRet(r.s, a0), r1 = blendRet(r.s, a1);
       const mcr = r.s === sel ? mc[years] : null;
-      row('ln-' + (r.k % 5), r.s.name, r.pts[years].nw, Math.abs(r0 - r1) < 0.05 ? r0.toFixed(1) + '%' : `${r0.toFixed(1)}% → ${r1.toFixed(1)}%`, mcr ? `${fmtShort(mcr.p10)} – ${fmtShort(mcr.p90)}` : 'select to see', r.s === sel);
+      row('ln-' + (r.k % 5), r.s.name, r.pts[years].nw, Math.abs(r0 - r1) < 0.05 ? r0.toFixed(1) + '%' : `${r0.toFixed(1)}% → ${r1.toFixed(1)}%`, mcr ? `${fmtShort(mcr.p10)} – ${fmtShort(mcr.p90)}` : 'select to see', r.s === sel,
+        riskModel(Object.fromEntries(BUCKETS.map(b => [b, (a0[b] || 0) * r.pts[0].assets])), debtNow, r.s.assume));
     }
     tbl.append(tb);
     // allocation over time for the selected scenario
@@ -2035,6 +2038,189 @@
   let scResizeT = 0;
   window.addEventListener('resize', () => { if (!$('scView').hidden) { clearTimeout(scResizeT); scResizeT = setTimeout(scRun, 150); } });
   window.addEventListener('beforeunload', e => { if (scDirty && !$('scView').hidden) { e.preventDefault(); e.returnValue = ''; } });
+
+  // ---------- Risk & diversification ----------
+  // An allocator's view of the whole balance sheet. Market risk comes from the look-through mix by bucket, with the
+  // long-run return / volatility / correlation assumptions used by Scenarios: ex-ante volatility, a parametric
+  // 1-in-20 bad year (95% VaR and expected shortfall), each bucket's share of total risk (Euler risk contributions),
+  // the effective number of independent bets (inverse HHI of risk shares) and the diversification ratio.
+  // Debts are fixed in value, so net worth is more volatile than assets by assets ÷ net worth (leverage).
+  // Historical stress tests apply approximate peak-to-trough moves by bucket. A scorecard checks the common
+  // institutional limits: concentration, speculative assets, liquidity, leverage, currency, counterparty, tail loss.
+  const STRESS = [
+    { name: '2008 financial crisis', sub: 'Oct 2007 – Mar 2009, peak to trough (bitcoin didn’t exist: −75% assumed)', s: { Equities: -50, Bonds: 6, Cash: 2, Gold: 20, Property: -25, Commodities: -55, Bitcoin: -75, Other: -30 } },
+    { name: '2020 Covid crash', sub: 'Feb – Mar 2020', s: { Equities: -34, Bonds: 1, Cash: 0, Gold: -3, Property: -10, Commodities: -30, Bitcoin: -50, Other: -20 } },
+    { name: '2022 inflation shock', sub: 'Calendar 2022: stocks and bonds fell together', s: { Equities: -18, Bonds: -13, Cash: 1.5, Gold: 0, Property: -10, Commodities: 16, Bitcoin: -64, Other: -10 } },
+    { name: 'Stagflation', sub: 'Hypothetical 1970s-style year', s: { Equities: -25, Bonds: -10, Cash: 5, Gold: 30, Property: -5, Commodities: 25, Bitcoin: -50, Other: -10 } },
+    { name: 'Crypto winter', sub: 'Bitcoin −75%, everything else flat', s: { Bitcoin: -75 } }
+  ];
+  const Z95 = 1.645, ES95 = 2.063;           // normal quantile and expected-shortfall multiplier at 95%
+  function riskModel(by, debts, assume) {
+    const asm = assume || SC_DEFAULTS;
+    const A = BUCKETS.reduce((a, b) => a + Math.max(0, by[b] || 0), 0);
+    if (!(A > 0)) return null;
+    const w = Object.fromEntries(BUCKETS.map(b => [b, Math.max(0, by[b] || 0) / A]));
+    const sig = b => asm[b][1] / 100;
+    const cw = Object.fromEntries(BUCKETS.map(i => [i, BUCKETS.reduce((a, j) => a + w[j] * sig(i) * sig(j) * SC_CORR(i, j), 0)]));
+    const v = BUCKETS.reduce((a, i) => a + w[i] * cw[i], 0), vol = Math.sqrt(v);
+    const mu = BUCKETS.reduce((a, b) => a + w[b] * asm[b][0] / 100, 0);
+    const rc = Object.fromEntries(BUCKETS.map(b => [b, v ? w[b] * cw[b] / v : 0]));
+    const rcs = Object.values(rc).filter(x => x > 0), bets = rcs.length ? 1 / rcs.reduce((a, x) => a + x * x, 0) : 0;
+    const capN = 1 / BUCKETS.reduce((a, b) => a + w[b] * w[b], 0);
+    const dr = vol ? BUCKETS.reduce((a, b) => a + w[b] * sig(b), 0) / vol : 1;
+    const nw = A - (debts || 0), lev = nw > 0 ? A / nw : Infinity;
+    const stress = STRESS.map(t => ({ ...t, loss: BUCKETS.reduce((a, b) => a + (by[b] || 0) * (t.s[b] || 0) / 100, 0) }));
+    return { A, nw, w, vol, mu, rc, bets, capN, dr, lev, volNW: nw > 0 ? vol * lev : null,
+      var95: (Z95 * vol - mu) * A, es95: (ES95 * vol - mu) * A, stress };
+  }
+  // the stock/bond mix with the same volatility (using the same assumptions)
+  function equivMix(vol) {
+    const s = e => Math.sqrt(e * e * .16 * .16 + (1 - e) * (1 - e) * .06 * .06 + 2 * e * (1 - e) * SC_CORR('Equities', 'Bonds') * .16 * .06);
+    if (vol <= s(0)) return 'less volatile than an all-bond portfolio';
+    if (vol > s(1)) return `about ${(vol / s(1)).toFixed(1)}× as volatile as an all-stock portfolio`;
+    let lo = 0, hi = 1; for (let k = 0; k < 40; k++) { const m = (lo + hi) / 2; if (s(m) < vol) lo = m; else hi = m; }
+    const e = Math.round(lo * 20) * 5; return `similar to a ${e}/${100 - e} stock/bond portfolio`;
+  }
+  const profileOf = v => v < 0.05 ? 'Conservative' : v < 0.09 ? 'Moderate' : v < 0.13 ? 'Growth' : 'Aggressive';
+  const LOCKED_RE = /401|403|457|ira\b|pension|super|hsa|retire|kiwisaver|sipp|tsp/i;
+  function liquidityOf(i) {
+    const b = mainBucket(i);
+    if (['Vehicles', 'Collectibles', 'Business'].includes(i.category) || (b === 'Property' && !i.ticker)) return 'illiquid';
+    if (i.category === 'Retirement' || LOCKED_RE.test(i.accountType || '') || LOCKED_RE.test(i.category || '')) return 'locked';
+    return 'liquid';
+  }
+  const singleAsset = i => (mainBucket(i) === 'Property' && !i.ticker) || PRICED.includes(i.currency) || ['Vehicles', 'Collectibles', 'Business'].includes(i.category);
+  function bucketValues(list) {
+    const by = Object.fromEntries(BUCKETS.map(b => [b, 0]));
+    for (const i of list) if (i.kind === 'asset' && i.value > 0 && !i.noFx) for (const [c, w] of Object.entries(mixFor(i))) by[bucketOf(c)] += i.value * w / 100;
+    return by;
+  }
+  function assessRisk(vis) {
+    const assets = vis.filter(i => i.kind === 'asset' && i.value > 0 && !i.noFx), debts = vis.filter(i => i.kind === 'debt' && i.value > 0 && !i.noFx);
+    const A = assets.reduce((a, i) => a + i.value, 0), D = debts.reduce((a, i) => a + i.value, 0);
+    const M = riskModel(bucketValues(vis), D); if (!M) return null;
+    const nw = A - D, checks = [];
+    const st = (v, g, w) => v <= g ? 'good' : v <= w ? 'warning' : 'serious';
+    const pctA = v => Math.round(v / A * 100) + '%';
+    // 1. diversification of risk
+    const top = BUCKETS.slice().sort((a, b) => M.rc[b] - M.rc[a])[0];
+    checks.push({ k: 'div', name: 'Sources of risk', status: M.bets >= 3 ? 'good' : M.bets >= 2 ? 'warning' : 'serious',
+      find: `About ${M.bets.toFixed(1)} independent bets; ${top.toLowerCase()} drive ${Math.round(M.rc[top] * 100)}% of your risk.`,
+      rule: 'Spread risk across several sources that don’t move together, so no single one decides your outcome.' });
+    // 2. single-asset concentration
+    const singles = assets.filter(singleAsset).sort((a, b) => b.value - a.value), big = singles[0];
+    const bigP = big ? big.value / A : 0;
+    checks.push({ k: 'single', name: 'Single-asset concentration', status: st(bigP, 0.10, 0.25),
+      find: big && bigP >= 0.05 ? `${big.name} is ${pctA(big.value)} of assets${singles.filter(i => i.value / A >= 0.10).length > 1 ? `; ${singles.filter(i => i.value / A >= 0.10).length} single assets are over 10%` : ''}.` : 'No single property, coin or other individual asset is over 5% of assets.',
+      rule: 'Common limit: no one asset above 10–20%. Diversified funds don’t count; a single property or coin does.' });
+    // 3. speculative assets
+    const btc = M.w.Bitcoin;
+    checks.push({ k: 'spec', name: 'Speculative assets', status: st(btc, 0.05, 0.10),
+      find: btc > 0.0005 ? `Bitcoin is ${(btc * 100).toFixed(1)}% of assets and ${Math.round(M.rc.Bitcoin * 100)}% of risk.` : 'No crypto.',
+      rule: 'Institutions that hold crypto usually cap it at 1–5% and size it so a 75% fall is survivable.' });
+    // 4. liquidity
+    const liq = { liquid: 0, locked: 0, illiquid: 0 }; for (const i of assets) liq[liquidityOf(i)] += i.value;
+    const lp = liq.liquid / A;
+    checks.push({ k: 'liq', name: 'Liquidity', status: lp >= 0.25 ? 'good' : lp >= 0.10 ? 'warning' : 'serious',
+      find: `${pctA(liq.liquid)} available within days, ${pctA(liq.locked)} in retirement accounts, ${pctA(liq.illiquid)} illiquid (property and similar).`,
+      rule: 'Keep enough accessible that you’re never forced to sell at a bad time or pay early-withdrawal penalties.' });
+    // 5. leverage
+    const dr = D / A;
+    checks.push({ k: 'lev', name: 'Leverage', status: nw <= 0 ? 'serious' : st(dr, 0.30, 0.50),
+      find: D ? `Debts are ${pctA(D)} of assets, so net worth moves ${nw > 0 ? M.lev.toFixed(2) + '×' : 'more than'} as much as your assets.` : 'No debts.',
+      rule: 'Debt magnifies every gain and loss. Under 30% of assets is conservative; over 50% leaves little room for a fall.' });
+    // 6. currency match (spending vs holdings)
+    const xp = exposures(vis).currency, spend = {}; let spT = 0;
+    for (const e of expView()) if (e.monthly) { spend[e.currency] = (spend[e.currency] || 0) + e.monthly; spT += e.monthly; }
+    if (!spT) spend[dispCur()] = 1;
+    const outside = Object.entries(xp).filter(([c]) => !spend[c]).reduce((a, [, e]) => a + e.assets - e.debts, 0);
+    const op = nw > 0 ? Math.max(0, outside) / nw : 0;
+    const big2 = Object.entries(xp).map(([c, e]) => [c, e.assets - e.debts]).filter(([c]) => !spend[c]).sort((a, b) => b[1] - a[1]).slice(0, 2).filter(([, v]) => v > 0).map(([c]) => c === 'XAU' ? 'gold' : c === 'BTC' ? 'bitcoin' : c);
+    checks.push({ k: 'fx', name: 'Currency match', status: st(op, 0.30, 0.60),
+      find: `${Math.round(op * 100)}% of net worth is outside the currency you spend in (${Object.keys(spend).join(', ')})${big2.length ? `, mainly ${big2.join(' and ')}` : ''}.`,
+      rule: 'Match assets to future spending. Holding other currencies is fine if you’ll live there; otherwise it’s an extra bet.' });
+    // 7. counterparty (bank deposits above insurance limits)
+    const cp = counterparty(vis); let unins = 0;
+    for (const e of cp) { const dep = Object.values(e.deposits).reduce((a, d) => a + d.v, 0); unins += Math.max(0, dep - e.insured); }
+    checks.push({ k: 'cp', name: 'Counterparty', status: unins < 1 ? 'good' : unins / A <= 0.05 ? 'warning' : 'serious',
+      find: unins < 1 ? 'All bank deposits are within deposit-insurance limits.' : `${fmt(unins)} of bank deposits is above insurance limits (${pctA(unins)} of assets).`,
+      rule: 'Keep deposits within each bank’s insurance limit; spread larger balances or use Treasury bills or money-market funds.' });
+    // 8. tail loss
+    const worst = M.stress.slice().sort((a, b) => a.loss - b.loss)[0], wl = nw > 0 ? -worst.loss / nw : 0;
+    checks.push({ k: 'tail', name: 'Tail loss', status: worst.loss >= 0 ? 'good' : st(wl, 0.20, 0.35),
+      find: worst.loss < 0 ? `Worst stress test (${worst.name}) would cost ${fmt(-worst.loss)}, ${Math.round(wl * 100)}% of net worth.` : 'None of the stress tests reduce your net worth.',
+      rule: 'Know your worst plausible loss and make sure you could live through it without selling. Under 20% of net worth is cautious; over 35% is a deep hole.' });
+    // 9. emergency reserve
+    const ef = (() => { const ex = expView().filter(e => e.monthly !== null), ess = ex.filter(e => e.essential).reduce((a, e) => a + e.monthly, 0); const base = ess || ex.reduce((a, e) => a + e.monthly, 0); if (!base) return null;
+      const set = asides.reduce((t, a) => t + (a.amount === null ? 0 : (conv(a.amount, a.currency) || 0)), 0); return Math.max(0, efHoldings().reduce((a, i) => a + i.value, 0) - set) / base; })();
+    checks.push({ k: 'ef', name: 'Emergency reserve', status: ef === null ? 'info' : ef >= 6 ? 'good' : ef >= 3 ? 'warning' : 'serious',
+      find: ef === null ? 'Add monthly expenses to check this.' : `${fmtMonths(ef)} months of spending in cash after set-asides.`,
+      rule: '3–6 months is the usual guideline; more if your income is variable or you’re supporting others.' });
+    return { M, checks, A, D, nw, liq, worst, top };
+  }
+  const RK_ICON = { good: '✓', warning: '!', serious: '✕', info: '–' }, RK_WORD = { good: 'OK', warning: 'Watch', serious: 'Concern', info: 'Not set' };
+  function renderRisk() {
+    const sec = $('rkSection');
+    const R = mode === 'locked' ? null : assessRisk(visible());
+    if (!R) { sec.hidden = true; return; }
+    sec.hidden = false;
+    const { M, checks } = R, volNW = M.volNW;
+    $('rkProfile').textContent = volNW === null ? '—' : profileOf(volNW);
+    $('rkProfileSub').textContent = volNW === null ? 'Net worth is zero or negative.' : `Net worth volatility about ${(volNW * 100).toFixed(1)}% a year, ${equivMix(volNW)}.`;
+    $('rkVar').textContent = M.var95 > 0 ? '−' + fmt(M.var95) : 'Small';
+    $('rkVarSub').textContent = M.var95 > 0 ? `${R.nw > 0 ? Math.round(M.var95 / R.nw * 100) + '% of net worth. ' : ''}In the worst 5% of years the average loss is about ${fmt(M.es95)}.` : 'Your expected return outweighs a 1-in-20 fall.';
+    $('rkDiv').textContent = M.bets.toFixed(1) + ' bets';
+    $('rkDivSub').textContent = `Spread like ${M.capN.toFixed(1)} equal asset classes by money, but only ${M.bets.toFixed(1)} by risk. Diversification ratio ${M.dr.toFixed(2)} (1 = none).`;
+    // capital vs risk bars
+    const bars = $('rkBars'); bars.textContent = '';
+    for (const [lab, o] of [['Money', M.w], ['Risk', M.rc]]) {
+      const row = document.createElement('div'); row.className = 'sc-arow';
+      const l = document.createElement('span'); l.textContent = lab;
+      const bar = document.createElement('span'); bar.className = 'sc-abar';
+      BUCKETS.forEach((b, ix) => { const v = Math.max(0, o[b]); if (v < 0.002) return; const seg = document.createElement('i'); seg.className = 'bk-' + ix; seg.style.width = (v * 100) + '%'; seg.title = `${b}: ${(M.w[b] * 100).toFixed(1)}% of money, ${(M.rc[b] * 100).toFixed(1)}% of risk`; bar.append(seg); });
+      const a = document.createElement('span'); a.className = 'amt'; a.textContent = lab === 'Money' ? fmtShort(M.A) : 'assets ' + (M.vol * 100).toFixed(1) + '%/yr';
+      row.append(l, bar, a); bars.append(row);
+    }
+    const lg = $('rkLegend'); lg.textContent = '';
+    BUCKETS.forEach((b, ix) => { if (M.w[b] < 0.002) return; const s = document.createElement('span'); const d = document.createElement('i'); d.className = 'bk-' + ix; s.append(d, `${b} ${Math.round(M.w[b] * 100)}% → ${Math.round(M.rc[b] * 100)}%`); lg.append(s); });
+    const gaps = BUCKETS.filter(b => M.w[b] > 0.002).sort((a, b) => (M.rc[b] - M.w[b]) - (M.rc[a] - M.w[a]));
+    const hi = gaps[0], lo = gaps[gaps.length - 1];
+    $('rkRiskNote').textContent = `${hi} ${M.w[hi] < 0.995 ? `are ${Math.round(M.w[hi] * 100)}% of your money but about ${Math.round(M.rc[hi] * 100)}% of your risk` : 'are all of your risk'}` +
+      (lo && lo !== hi && M.w[lo] > 0.02 ? `; ${lo.toLowerCase()} (${Math.round(M.w[lo] * 100)}% of money) add${M.rc[lo] < 0.005 ? ' almost no' : ` only ${Math.round(M.rc[lo] * 100)}% of`} risk` : '') + '. Legend shows share of money → share of risk.';
+    // stress tests
+    const tbl = $('rkStress'); tbl.textContent = '';
+    const hr = document.createElement('tr'); ['Scenario', 'Net worth change', '% of net worth', 'Hardest hit'].forEach(t => { const th = document.createElement('th'); th.textContent = t; hr.append(th); });
+    const th = document.createElement('thead'); th.append(hr); tbl.append(th);
+    const tb = document.createElement('tbody');
+    const by = BUCKETS.reduce((o, b) => (o[b] = M.w[b] * M.A, o), {});
+    const fxNet = Object.entries(exposures(visible()).currency).filter(([c]) => c !== dispCur() && !PRICED.includes(c)).reduce((a, [, e]) => a + e.assets - e.debts, 0);
+    const rows = M.stress.map(t => ({ ...t, hit: BUCKETS.filter(b => by[b] * (t.s[b] || 0) < 0).sort((a, b) => by[a] * t.s[a] - by[b] * t.s[b])[0] }));
+    if (Math.abs(fxNet) > 1) rows.push({ name: `${dispCur()} up 15%`, sub: `Against every other currency you hold (net of debts in them); gold and bitcoin excluded`, loss: fxNet * (1 / 1.15 - 1), hit: null, fx: true });
+    for (const r of rows) {
+      const tr = document.createElement('tr');
+      const n = document.createElement('td'); n.className = 'rk-scn'; n.textContent = r.name; const sm = document.createElement('small'); sm.textContent = r.sub; n.append(sm); tr.append(n);
+      const v = document.createElement('td'); v.textContent = (r.loss >= 0 ? '+' : '−') + fmt(Math.abs(r.loss)); v.className = r.loss < -0.5 ? 'rk-neg' : 'rk-pos'; tr.append(v);
+      const pc = document.createElement('td'); pc.textContent = R.nw > 0 ? ((r.loss >= 0 ? '+' : '−') + Math.abs(r.loss / R.nw * 100).toFixed(1) + '%') : '—'; tr.append(pc);
+      const h = document.createElement('td'); h.textContent = r.fx ? 'Non-' + dispCur() + ' holdings' : r.hit ? `${r.hit} (${String(r.s[r.hit]).replace('-', '−')}%)` : '—'; tr.append(h);
+      tb.append(tr);
+    }
+    tbl.append(tb);
+    // scorecard
+    const sc = $('rkScore'); sc.textContent = '';
+    for (const c of checks) {
+      const row = document.createElement('div'); row.className = 'rk-item rk-' + c.status;
+      const ic = document.createElement('span'); ic.className = 'rk-ico'; ic.textContent = RK_ICON[c.status]; ic.setAttribute('aria-hidden', 'true');
+      const nm = document.createElement('div'); nm.className = 'rk-name'; nm.textContent = c.name; const w = document.createElement('small'); w.textContent = RK_WORD[c.status]; nm.append(w);
+      const f = document.createElement('div'); f.className = 'rk-find'; f.textContent = c.find; const r = document.createElement('small'); r.textContent = c.rule; f.append(r);
+      row.append(ic, nm, f); sc.append(row);
+    }
+    const watch = checks.filter(c => c.status === 'warning').map(c => c.name.toLowerCase()), act = checks.filter(c => c.status === 'serious').map(c => c.name.toLowerCase());
+    const ok = checks.filter(c => c.status === 'good').length, scored = checks.filter(c => c.status !== 'info').length;
+    const list = a => a.length > 1 ? a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1] : a[0];
+    $('rkVerdict').textContent = (volNW === null ? '' : `${profileOf(volNW)} risk overall: ${equivMix(volNW)}. `) +
+      `${ok} of ${scored} checks pass.` + (act.length ? ` Address ${list(act)}.` : '') + (watch.length ? ` Keep an eye on ${list(watch)}.` : '') + (!act.length && !watch.length ? ' Nothing stands out.' : '');
+    $('rkNote').textContent = 'Market risk uses the long-run return, volatility and correlation assumptions from the Scenarios tab, applied to your look-through mix; a normal approximation that understates real-world tails, which is why the stress tests are there. Stress moves are approximate peak-to-trough figures in US dollar terms; a home is valued less often than a fund, so its swings look smaller than they are. Limits are common institutional and planning guidelines, not personal advice.';
+  }
 
   // ---------- Rebalance what-if ----------
   // A list of manual moves ("$20k from Checking to Gold"). Hindsight: what each move would have earned over the last
@@ -2217,6 +2403,12 @@
     const tb0 = tot(R.before), ta = tot(R.after);
     const ch = BUCKETS.filter(b => Math.abs(R.before[b] / tb0 - R.after[b] / ta) >= 0.0005).map(b => `${b} ${(R.before[b] / tb0 * 100).toFixed(1)}% → ${(R.after[b] / ta * 100).toFixed(1)}%`);
     $('mvChanges').textContent = ch.length ? ch.join(' · ') : 'No change in your asset-class mix (the moves stay within the same buckets).';
+    const dNow = visible().filter(i => i.kind === 'debt' && i.value > 0 && !i.noFx).reduce((a, i) => a + i.value, 0);
+    const m0 = riskModel(R.before, dNow), m1 = riskModel(R.after, dNow);
+    if (m0 && m1 && m0.volNW !== null && m1.volNW !== null) {
+      const wl = M => Math.round(-Math.min(0, ...M.stress.map(t => t.loss)) / M.nw * 100);
+      $('mvRisk').textContent = `Risk: net-worth volatility ${(m0.volNW * 100).toFixed(1)}% → ${(m1.volNW * 100).toFixed(1)}% (${profileOf(m0.volNW)}${profileOf(m0.volNW) !== profileOf(m1.volNW) ? ' → ' + profileOf(m1.volNW) : ''}) · diversification ${m0.bets.toFixed(1)} → ${m1.bets.toFixed(1)} bets · worst stress −${wl(m0)}% → −${wl(m1)}% of net worth · 1-in-20 bad year −${fmtShort(Math.max(0, m0.var95))} → −${fmtShort(Math.max(0, m1.var95))}.`;
+    } else $('mvRisk').textContent = '';
     const ef = mvEf(R), warns = [];
     if (ef && Math.abs(ef[0] - ef[1]) > 0.05) warns.push(`Emergency fund: ${fmtMonths(ef[0])} → ${fmtMonths(ef[1])} months of cover${ef[1] < 3 ? ', below the common 3–6 month guideline' : ''}.`);
     $('mvWarn').textContent = warns.join(' '); $('mvWarn').hidden = !warns.length;

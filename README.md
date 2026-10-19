@@ -73,6 +73,28 @@ Each holding can show its **12-month** and **5-year (per year)** total return, m
 
 The asset list shows each holding's returns and a value-weighted 12-month return for each bucket. The **Returns** panel gives two overall figures: **all assets** (every asset at its value: cash earns its interest rate, and anything without a figure counts as 0% and is called out) and **invested holdings only** (just the holdings with a return), plus a table of how much each group adds. These describe the funds' past performance, not your own money-weighted return, and the projection doesn't use them. The edit form has a **Use the 5-year average** link if you want to copy that figure into the holding's Expected return.
 
+## Risk & diversification
+
+An allocator's view of the whole balance sheet, on the overview (owner filter applies):
+
+- **Risk profile**: estimated yearly volatility of net worth (asset volatility × assets ÷ net worth, since debts don't move), labelled Conservative (<5%), Moderate (5–9%), Growth (9–13%) or Aggressive (13%+), with the stock/bond mix of equal volatility.
+- **A bad year (1 in 20)**: parametric 95% value at risk over one year, plus expected shortfall (the average loss in the worst 5% of years).
+- **Diversification**: the effective number of independent bets (inverse concentration of risk contributions) next to the same measure by money, and the diversification ratio.
+- **Where your risk comes from**: each asset class's share of money vs its share of risk (Euler risk contributions).
+- **Stress tests**: approximate peak-to-trough moves by asset class for 2008, 2020, 2022, a hypothetical stagflation year and a crypto winter, plus your display currency rising 15% against the others you hold (net of debts in them).
+- **Scorecard**: OK / Watch / Concern against common institutional and planning limits:
+  - sources of risk (3+ bets);
+  - single-asset concentration (one property, coin or other individual asset under 10% of assets; over 25% is a concern; diversified funds don't count);
+  - speculative assets (crypto at most 5%);
+  - liquidity (at least 25% accessible, with retirement accounts and property counted separately);
+  - leverage (debts under 30% of assets);
+  - currency match against what you spend in;
+  - bank deposits within insurance limits;
+  - tail loss (worst stress under 20% of net worth);
+  - emergency reserve (6+ months).
+
+Market risk uses the same return, volatility and correlation assumptions as Scenarios, applied to the look-through mix. It's a normal approximation, which understates real tails; the stress tests cover that. The Scenarios table also shows each scenario's net-worth volatility and worst stress loss, and the rebalance what-if shows risk before → after.
+
 ## Macro exposure
 
 Two look-through views of your net worth, net of debts: **by country** (where the economic risk sits) and **by currency** (what an exchange-rate move would hit).

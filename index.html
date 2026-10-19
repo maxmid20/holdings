@@ -6,8 +6,8 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://api.airtable.com; form-action 'none'; base-uri 'none'; object-src 'none'">
 <meta name="referrer" content="no-referrer">
 <title>Holdings</title>
-<link rel="stylesheet" href="styles.css?v=2026-10-18n">
-<script src="app.js?v=2026-10-18n" defer></script>
+<link rel="stylesheet" href="styles.css?v=2026-10-18o">
+<script src="app.js?v=2026-10-18o" defer></script>
 </head>
 <body>
 <div class="wrap">
@@ -49,6 +49,26 @@
       <div class="card">
         <div id="lookBar"></div>
         <div id="lookTable"></div>
+      </div>
+    </div>
+    <div class="section" id="rkSection" hidden>
+      <div class="section-head"><h2>Risk &amp; diversification</h2><span class="hint">Institutional-style assessment · estimates, not guarantees</span></div>
+      <div class="card">
+        <p class="rk-verdict" id="rkVerdict"></p>
+        <div class="mv-stats rk-stats">
+          <div><div class="label">Risk profile</div><div class="ret-big" id="rkProfile"></div><div class="hint" id="rkProfileSub"></div></div>
+          <div><div class="label">A bad year (1 in 20)</div><div class="ret-big" id="rkVar"></div><div class="hint" id="rkVarSub"></div></div>
+          <div><div class="label">Diversification</div><div class="ret-big" id="rkDiv"></div><div class="hint" id="rkDivSub"></div></div>
+        </div>
+        <h3 class="mv-h">Where your risk comes from</h3>
+        <div class="sc-alloc-bars rk-bars" id="rkBars"></div>
+        <div class="cp-legend" id="rkLegend"></div>
+        <p class="hint" id="rkRiskNote"></p>
+        <h3 class="mv-h">Stress tests</h3>
+        <div class="proj-table-wrap"><table class="proj-table rk-table" id="rkStress"></table></div>
+        <h3 class="mv-h">Scorecard</h3>
+        <div class="rk-score" id="rkScore"></div>
+        <p class="hint" id="rkNote"></p>
       </div>
     </div>
     <div class="section" id="xpSection" hidden>
@@ -154,6 +174,7 @@
           <div class="sc-alloc-bars" id="mvBars"></div>
           <div class="cp-legend" id="mvLegend"></div>
           <p class="hint" id="mvChanges"></p>
+          <p class="hint" id="mvRisk"></p>
           <p class="hint warn-text" id="mvWarn" hidden></p>
           <div class="mv-actions"><button class="btn primary" type="button" id="mvProject">Project this mix forward</button></div>
         </div>

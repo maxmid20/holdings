@@ -281,3 +281,20 @@ dialog.wide{width:min(760px,calc(100vw - 32px))}
   .mv-stats{grid-template-columns:1fr}
 }
 .ret-big.pos{color:var(--pos)}.ret-big.neg{color:var(--neg)}
+
+/* risk & diversification */
+.rk-verdict{font-size:15px;line-height:1.5;margin:0 0 4px}
+.rk-stats{margin-top:12px}
+.rk-score{display:grid;gap:0}
+.rk-item{display:grid;grid-template-columns:22px 150px 1fr;gap:10px;align-items:start;padding:10px 0;border-top:1px solid var(--line);font-size:14px}
+.rk-item:first-child{border-top:0}
+.rk-ico{width:20px;height:20px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#1a1a19;margin-top:1px}
+.rk-good .rk-ico{background:#0ca30c;color:#fff}.rk-warning .rk-ico{background:#fab219}.rk-serious .rk-ico{background:#ec835a}.rk-info .rk-ico{background:var(--surface-2);color:var(--muted)}
+.rk-name{font-weight:600}
+.rk-name small{display:block;font-weight:400;color:var(--muted);font-size:12px}
+.rk-find{color:var(--text)}
+.rk-find small{display:block;color:var(--muted);font-size:12px;margin-top:2px}
+.rk-table td.rk-scn{white-space:normal;min-width:190px}
+.rk-table td.rk-scn small{display:block;color:var(--muted);font-size:12px}
+.rk-neg{color:var(--neg)}.rk-pos{color:var(--pos)}
+@media (max-width:640px){.rk-item{grid-template-columns:22px 1fr}.rk-item .rk-find{grid-column:2}}
