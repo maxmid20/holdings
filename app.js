@@ -209,7 +209,16 @@
     return p;
   }
 
-  const fromRecord = r => ({
+  // Field names are matched without regard to case ("Written Off" works as "Written off"); writes use the spelling
+  // your base actually has once we've seen it.
+  const fieldNames = {};            // lower-case name -> the name as spelled in your base
+  const FIELD_ALIASES = { 'written off': ['Written Off', 'Written-off', 'Write off', 'Write-off'], 'years left': ['Years Left'] };
+  const caseless = r => {
+    const f = r.fields || {}, low = {};
+    for (const k of Object.keys(f)) { low[k.toLowerCase()] = f[k]; fieldNames[k.toLowerCase()] = k; }
+    return new Proxy(f, { get: (t, k) => typeof k === 'string' && !(k in t) ? low[k.toLowerCase()] : t[k] });
+  };
+  const fromRecord = r => (r = { ...r, fields: caseless(r) }, {
     id: r.id,
     ...clean({
       name: r.fields.Name, kind: /^debt$/i.test(String(r.fields.Kind || '')) ? 'debt' : 'asset',
@@ -231,14 +240,20 @@
     if (!f.Institution) delete f.Institution;
     if (d.kind !== 'debt') { delete f['Years left']; delete f['Written off']; }
     for (const k of missingFields) delete f[k];
+    for (const k of Object.keys(f)) { const real = fieldNames[k.toLowerCase()]; if (real && real !== k) { f[real] = f[k]; delete f[k]; } }
     return f;
   };
   async function itemsWrite(fn) {
     try { return await fn(); }
     catch (x) {
       const m = /Unknown field name: "([^"]+)"/i.exec(x.message || '');
-      if (!m || !OPTIONAL_FIELDS.includes(m[1]) || missingFields.has(m[1])) throw x;
-      missingFields.add(m[1]);
+      const base = m && OPTIONAL_FIELDS.find(o => o.toLowerCase() === m[1].toLowerCase());
+      if (!m || !base || missingFields.has(base)) throw x;
+      // try the other common spellings before giving up on the column
+      const tried = fieldNames['~tried:' + base] || [], next = (FIELD_ALIASES[base.toLowerCase()] || []).find(a => a !== m[1] && !tried.includes(a));
+      if (next) { fieldNames['~tried:' + base] = [...tried, m[1]]; fieldNames[base.toLowerCase()] = next; return itemsWrite(fn); }
+      fieldNames[base.toLowerCase()] = base;
+      missingFields.add(base); m[1] = base;
       const out = await fn();
       showBanner(`Saved, except "${m[1]}": add a single-line text field named “${m[1]}” to your Items table in Airtable so it can be stored.`, 'info');
       return out;
