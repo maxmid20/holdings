@@ -2489,25 +2489,52 @@
   // band, the plan trades back to target (or fixes only the breaches). Trades are turned into holding-level moves:
   // low-yield excess cash and liquid holdings first; retirement-account holdings become "switch inside the account";
   // bucket shortfalls go to your largest existing holding in that bucket, else a new position.
-  const POL = prefs.policy = Object.assign({ targets: null, band: 5, reserve: 6, prop: false, breach: false }, prefs.policy || {});
+  const POL = prefs.policy = Object.assign({ targets: null, band: 5, reserve: 6, breach: false }, prefs.policy || {});
+  if (!POL.basis) { POL.basis = 'all'; if (POL.targets && !POL.prop) POL._migrate = true; delete POL.prop; }   // older policies were set on investable money; re-expressed on first render
   const spendNow = () => { const ex = expView().filter(e => e.monthly !== null); return { ess: ex.filter(e => e.essential).reduce((a, e) => a + e.monthly, 0), all: ex.reduce((a, e) => a + e.monthly, 0) }; };
   const asideTotal = () => asides.reduce((t, a) => t + (a.amount === null ? 0 : (conv(a.amount, a.currency) || 0)), 0);
+  // Two bases: "all" = your whole portfolio, exactly the mix in "Your real mix" (property held at its current share,
+  // since it can't be partly sold; cash isn't sold below the reserve). "investable" = everything except property
+  // and the cash reserve.
+  const polAll = () => POL.basis !== 'investable';
   function polBase() {
-    const vis = visible(), by = bucketValues(vis), sp = spendNow();
+    const vis = visible(), by = bucketValues(vis), sp = spendNow(), all = polAll();
     const reserve = (Number(POL.reserve) || 0) * (sp.ess || sp.all) + asideTotal();
-    const keep = Math.min(by.Cash, reserve);
-    const inc = BUCKETS.filter(b => POL.prop || b !== 'Property');
+    const keep = all ? 0 : Math.min(by.Cash, reserve);
+    const inc = BUCKETS.filter(b => all || b !== 'Property');
     const cur = Object.fromEntries(inc.map(b => [b, b === 'Cash' ? by.Cash - keep : by[b]]));
     const T = inc.reduce((a, b) => a + cur[b], 0);
-    return { vis, by, inc, cur, T, reserve, keep, spendSet: !!(sp.ess || sp.all) };
+    const propShare = all && T ? Math.round(by.Property / T * 1000) / 10 : 0;
+    return { vis, by, inc, cur, T, reserve, keep, all, propShare, spendSet: !!(sp.ess || sp.all) };
+  }
+  // a mix of the non-property classes (e.g. a preset or a Macro suggestion) expressed on the current basis
+  function polFromMix(mix) {
+    const B = polBase(), others = BUCKETS.filter(b => b !== 'Property'), t = others.reduce((a, b) => a + (Number(mix[b]) || 0), 0) || 100;
+    const scale = (100 - B.propShare) / t;
+    const out = Object.fromEntries(others.map(b => [b, Math.round((Number(mix[b]) || 0) * scale * 10) / 10]));
+    if (B.all) out.Property = B.propShare;
+    const d = Math.round((100 - Object.values(out).reduce((a, b) => a + b, 0)) * 10) / 10, big = others.slice().sort((a, b) => (out[b] || 0) - (out[a] || 0))[0];
+    if (d && big) out[big] = Math.round((out[big] + d) * 10) / 10;
+    return out;
   }
   function roundTo100(o) {
     const r = Object.fromEntries(Object.entries(o).map(([k, v]) => [k, Math.round(v)]));
     const d = 100 - Object.values(r).reduce((a, b) => a + b, 0), big = Object.keys(r).sort((a, b) => o[b] - o[a])[0];
     if (big && d) r[big] += d; return r;
   }
-  const polCurrent = B => B.T ? roundTo100(Object.fromEntries(B.inc.map(b => [b, B.cur[b] / B.T * 100]))) : Object.fromEntries(B.inc.map(b => [b, 0]));
-  const polTargets = B => { const t = POL.targets; return t ? Object.fromEntries(B.inc.map(b => [b, Math.max(0, Number(t[b]) || 0)])) : polCurrent(B); };
+  const polCurrent = B => {
+    if (!B.T) return Object.fromEntries(B.inc.map(b => [b, 0]));
+    const r = Object.fromEntries(B.inc.map(b => [b, Math.round(B.cur[b] / B.T * 1000) / 10]));   // one decimal, like Your real mix
+    if (B.all) r.Property = B.propShare;
+    const d = Math.round((100 - Object.values(r).reduce((a, x) => a + x, 0)) * 10) / 10, big = B.inc.filter(b => !(B.all && b === 'Property')).sort((a, b) => r[b] - r[a])[0];
+    if (d && big) r[big] = Math.round((r[big] + d) * 10) / 10;
+    return r;
+  };
+  const polTargets = B => {
+    const t = POL.targets ? Object.fromEntries(B.inc.map(b => [b, Math.max(0, Number(POL.targets[b]) || 0)])) : polCurrent(B);
+    if (B.all) t.Property = B.propShare;      // property is held as is: its target is always its current share
+    return t;
+  };
   function polTrades(B, tg) {
     const T = B.T, band = Math.max(0, Number(POL.band) || 0);
     const rows = B.inc.map(b => { const now = T ? B.cur[b] / T * 100 : 0, t = tg[b] || 0, want = t / 100 * T; return { b, now, t, drift: now - t, out: Math.abs(now - t) > band + 1e-9, cur: B.cur[b], want, trade: 0 }; });
@@ -2563,12 +2590,15 @@
     return { moves, unfilled };
   }
   function renderTargets() {
-    const B = polBase(), sec = $('taSection');
+    let B = polBase(); const sec = $('taSection');
     if (!B.T) { sec.hidden = true; return; } sec.hidden = false;
+    if (POL._migrate) { const { Property, ...rest } = POL.targets || {}; POL.targets = POL.targets ? polFromMix(rest) : null; delete POL._migrate; savePrefs(); B = polBase(); }
     const tg = polTargets(B), sum = B.inc.reduce((a, b) => a + (tg[b] || 0), 0), ok = Math.abs(sum - 100) < 0.05;
-    $('taBand').value = POL.band; $('taReserve').value = POL.reserve; $('taProp').checked = !!POL.prop; $('taBreach').checked = !!POL.breach;
-    $('taBase').textContent = `Targets apply to ${fmt(B.T)}: your assets${POL.prop ? '' : ` except property (${fmt(B.by.Property)})`}` +
-      (B.keep > 0.5 ? ` and your ${fmt(B.keep)} cash reserve (${POL.reserve} months of ${B.spendSet ? 'spending' : 'spending (add expenses to set this)'}${asideTotal() > 0.5 ? ' plus set-asides' : ''})` : '') + '.' +
+    $('taBand').value = POL.band; $('taReserve').value = POL.reserve; $('taBasis').value = B.all ? 'all' : 'investable'; $('taBreach').checked = !!POL.breach;
+    const resTxt = `${POL.reserve} months of ${B.spendSet ? 'spending' : 'spending (add expenses to set this)'}${asideTotal() > 0.5 ? ' plus set-asides' : ''}`;
+    $('taBase').textContent = (B.all
+      ? `Targets apply to your whole portfolio (${fmt(B.T)}), the same mix as “Your real mix” on the overview. Property (${B.propShare}%) is held as is.` + (B.reserve > 0.5 ? ` Cash won’t be sold below your ${fmt(Math.min(B.reserve, B.by.Cash))} reserve (${resTxt}).` : '')
+      : `Targets apply to ${fmt(B.T)}: your assets except property (${fmt(B.by.Property)})` + (B.keep > 0.5 ? ` and your ${fmt(B.keep)} cash reserve (${resTxt})` : '') + '.') +
       (POL.targets ? '' : ' Targets start at your current mix: change them to your policy, or pick a starting point.');
     const { rows, anyOut } = ok ? polTrades(B, tg) : { rows: B.inc.map(b => ({ b, now: B.cur[b] / B.T * 100, t: tg[b] || 0, drift: B.cur[b] / B.T * 100 - (tg[b] || 0), out: false, cur: B.cur[b], trade: 0 })), anyOut: false };
     const tbl = $('taTable'); tbl.textContent = '';
@@ -2578,8 +2608,9 @@
     for (const r of rows) {
       const tr = document.createElement('tr');
       const n = document.createElement('td'); const dot = document.createElement('i'); dot.className = 'sc-dot bk-' + BUCKETS.indexOf(r.b); n.append(dot, r.b); tr.append(n);
-      const ti = document.createElement('td'); const inp = document.createElement('input'); inp.type = 'number'; inp.min = '0'; inp.max = '100'; inp.step = '1'; inp.value = tg[r.b] || 0; inp.setAttribute('aria-label', `${r.b} target %`);
+      const ti = document.createElement('td'); const inp = document.createElement('input'); inp.type = 'number'; inp.min = '0'; inp.max = '100'; inp.step = 'any'; inp.value = tg[r.b] || 0; inp.setAttribute('aria-label', `${r.b} target %`);
       inp.onchange = () => { const v = Math.max(0, Math.min(100, Number(inp.value) || 0)); POL.targets = { ...tg, [r.b]: v }; savePrefs(); renderPlan(); };
+      if (B.all && r.b === 'Property') { inp.disabled = true; inp.title = 'Property is held as is; its target is its current share'; }
       ti.append(inp); tr.append(ti);
       const nw = document.createElement('td'); nw.textContent = `${r.now.toFixed(1)}% · ${fmtShort(r.cur)}`; tr.append(nw);
       const dr = document.createElement('td'); const g = document.createElement('span'); g.className = 'ta-drift';
@@ -2639,12 +2670,18 @@
   $('taPreset').onchange = () => {
     const k = $('taPreset').value; if (!k) return;
     const B = polBase();
-    POL.targets = k === 'current' ? polCurrent(B) : Object.fromEntries(BUCKETS.map(b => [b, (SC_PRESETS[k].alloc || {})[b] || 0]));
+    POL.targets = k === 'current' ? polCurrent(B) : polFromMix(SC_PRESETS[k].alloc || {});
     $('taPreset').value = ''; savePrefs(); renderPlan();
   };
   $('taBand').onchange = () => { POL.band = clampNum($('taBand').value, 1, 25, 5); savePrefs(); renderPlan(); };
   $('taReserve').onchange = () => { POL.reserve = clampNum($('taReserve').value, 0, 60, 6); savePrefs(); renderPlan(); };
-  $('taProp').onchange = () => { POL.prop = $('taProp').checked; savePrefs(); renderPlan(); };
+  $('taBasis').onchange = () => {
+    const toAll = $('taBasis').value === 'all'; if (toAll === polAll()) return;
+    const old = POL.targets ? { ...POL.targets } : null;
+    POL.basis = toAll ? 'all' : 'investable'; delete POL.prop;
+    if (old) { const { Property, ...rest } = old; POL.targets = polFromMix(rest); }   // keep your policy, re-expressed on the new basis
+    savePrefs(); renderPlan();
+  };
   $('taBreach').onchange = () => { POL.breach = $('taBreach').checked; savePrefs(); renderPlan(); };
 
   // ---------- Plan: financial independence ----------
@@ -3143,7 +3180,7 @@
       tb2.append(tr);
     }
     cmp.append(tb2);
-    $('envUse').onclick = () => { POL.targets = Object.fromEntries(BUCKETS.map(b => [b, S.mix[b] || 0])); savePrefs(); location.hash = '#plan'; window.scrollTo(0, 0); showBanner(`Target allocation set to “${pick.label}”. Your cash reserve is kept aside; review the trades below.`, 'info'); };
+    $('envUse').onclick = () => { POL.targets = polFromMix(S.mix); savePrefs(); location.hash = '#plan'; window.scrollTo(0, 0); showBanner(`Target allocation set to “${pick.label}”. Your cash reserve is kept aside; review the trades below.`, 'info'); };
     $('envScen').onclick = () => {
       const start = Object.fromEntries(BUCKETS.map(b => [b, S.mix[b] || 0]));
       const sc = cleanScenario({ name: pick.label, start, end: start, glide: 0, assume: Object.fromEntries(BUCKETS.map(b => [b, SC_DEFAULTS[b].slice()])), monthly: null, growth: 0, rebalance: true, holdProperty: true });

@@ -161,7 +161,11 @@ Airtable's free plan allows 1,000 records per base, and the sync adds one Exposu
 
 ## Plan tab
 
-**Target allocation.** Set a target % per asset class, by hand or starting from your current mix or a preset, with a ± band.
+**Target allocation.** Set a target % per asset class, by hand or starting from your current mix or a preset, with a ± band. Under **Measure against** you choose the base:
+- **Whole portfolio** (the default) measures exactly the mix shown in "Your real mix" on the overview. Property is held at its current share, since it can't be partly sold, and cash isn't sold below your cash reserve.
+- **Investable only** leaves out property and the cash reserve.
+
+Switching keeps your policy, re-expressed on the new base.
 
 - **What the targets cover:** investable assets. Property is excluded unless you tick it, and so is a cash reserve of N months of spending plus set-asides.
 - **When it trades:** if any class leaves its band, the plan trades everything back to target. "Only fix breaches" moves just those classes, using cash to balance.

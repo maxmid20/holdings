@@ -6,8 +6,8 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://api.airtable.com; form-action 'none'; base-uri 'none'; object-src 'none'">
 <meta name="referrer" content="no-referrer">
 <title>Holdings</title>
-<link rel="stylesheet" href="styles.css?v=2026-10-19d">
-<script src="app.js?v=2026-10-19d" defer></script>
+<link rel="stylesheet" href="styles.css?v=2026-10-19e">
+<script src="app.js?v=2026-10-19e" defer></script>
 </head>
 <body>
 <div class="wrap">
@@ -257,7 +257,7 @@
           </select></label>
           <label>Band ± points<input id="taBand" type="number" min="1" max="25" step="1"></label>
           <label>Cash reserve (months)<input id="taReserve" type="number" min="0" max="60" step="1"></label>
-          <label class="inline"><input id="taProp" type="checkbox"> Include property</label>
+          <label>Measure against<select id="taBasis"><option value="all">Whole portfolio</option><option value="investable">Investable only</option></select></label>
           <label class="inline"><input id="taBreach" type="checkbox"> Only fix breaches</label>
         </div>
         <p class="hint" id="taBase"></p>
