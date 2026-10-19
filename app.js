@@ -3455,7 +3455,7 @@
   // savings and bonus can be overridden. The target is N months of essential spending (growing with inflation) plus
   // set-asides. "You could invest" is the largest steady extra monthly amount, plus a lump sum now, that keeps cash at
   // or above the target in every month of the forecast.
-  const SF = prefs.sf = Object.assign({ savings: null, raise: 0, months: null, retTake: false, mode: 'plan', events: [], over: {}, bonus: {} }, prefs.sf || {});
+  const SF = prefs.sf = Object.assign({ savings: null, raise: 0, months: null, retTake: false, mode: 'plan', basis: 'all', events: [], over: {}, bonus: {} }, prefs.sf || {});
   if (!Array.isArray(SF.events)) SF.events = [];
   if (!SF.over || typeof SF.over !== 'object') SF.over = {};
   if (!SF.bonus || typeof SF.bonus !== 'object') SF.bonus = {};
@@ -3468,7 +3468,7 @@
   const sfBon = ym => Math.max(0, Number(SF.bonus[ym]) || 0);
   function sfModel() {
     const vis = visible(), sp = spendNow(), infl = (Number(P.infl) || 0) / 100;
-    const ess = sp.ess || sp.all, months = SF.months === null || SF.months === undefined || SF.months === '' ? (Number(POL.reserve) || 6) : Number(SF.months);
+    const ess = SF.basis === 'ess' ? (sp.ess || sp.all) : sp.all, months = SF.months === null || SF.months === undefined || SF.months === '' ? (Number(POL.reserve) || 6) : Number(SF.months);
     const fund = efHoldings(), cash0 = fund.reduce((a, i) => a + i.value, 0);
     const cashRate = cash0 ? fund.reduce((a, i) => a + i.value * (has(i.rate) ? i.rate : SC_DEFAULTS.Cash[0]), 0) / cash0 : SC_DEFAULTS.Cash[0];
     const fundIds = new Set(fund.map(i => i.id));
@@ -3518,7 +3518,8 @@
     const reach = slack0 < 0 ? plan.find(r => r.cash >= r.target) : null;
     const bonusT = plan.reduce((a, r) => a + r.bonus, 0), savT = plan.reduce((a, r) => a + r.sav, 0);
     const any = (Number(SF.savings) || 0) > 0 || bonusT > 0 || plan.some(r => r.over && r.sav > 0);
-    return { plan, rec, cash0, target0, slack0, ess, months, fromPay, payroll, inv0, invRet, cashRate, sp, reach, bonusT, savT, any, asidesT: asides0.reduce((a, b) => a + b.v, 0) };
+    const noFx = expView().filter(e => e.noFx).length;
+    return { plan, rec, cash0, target0, slack0, ess, noFx, months, fromPay, payroll, inv0, invRet, cashRate, sp, reach, bonusT, savT, any, asidesT: asides0.reduce((a, b) => a + b.v, 0) };
   }
   function sfChart(chart, tip, rows, lines, labels) {
     [...chart.querySelectorAll('svg')].forEach(n => n.remove()); tip.hidden = true;
@@ -3604,7 +3605,14 @@
     $('sfSavings').value = SF.savings ?? ''; $('sfSavings').placeholder = 'e.g. 3000'; $('sfRaise').value = SF.raise; $('sfMonths').value = Mo.months; $('sfRetTake').checked = !!SF.retTake;
     const covNow = Mo.ess ? Math.max(0, Mo.cash0 - Mo.asidesT) / Mo.ess : null;
     $('sfNow').textContent = covNow === null ? fmt(Mo.cash0) : `${fmtMonths(covNow)} mo`;
-    $('sfNowSub').textContent = Mo.ess ? `${fmt(Mo.cash0)} cash${Mo.asidesT > 0.5 ? `, ${fmt(Mo.asidesT)} of it set aside` : ''}; target ${Mo.months} months = ${fmt(Mo.target0)}.` : 'Add monthly expenses on the overview to set a target.';
+    const spLabel = SF.basis === 'ess' && Mo.sp.ess ? 'essential spending' : 'living expenses';
+    $('sfNowSub').textContent = !Mo.ess ? 'Add monthly living expenses on the overview to set a target.'
+      : (Mo.asidesT > 0.5 ? `${fmt(Math.max(0, Mo.cash0 - Mo.asidesT))} free cash (${fmt(Mo.cash0)} minus ${fmt(Mo.asidesT)} set aside)` : `${fmt(Mo.cash0)} cash`) + ` ÷ ${fmt(Mo.ess)}/mo ${spLabel}. ` +
+        `Target: ${Mo.months} × ${fmt(Mo.ess)} = ${fmt(Mo.months * Mo.ess)}` + (Mo.asidesT > 0.5 ? `, plus ${fmt(Mo.asidesT)} set aside = ${fmt(Mo.target0)} cash.` : '.') +
+        (Mo.noFx ? ` ${Mo.noFx} expense${Mo.noFx === 1 ? ' isn’t' : 's aren’t'} counted (no exchange rate).` : '');
+    const bs = $('sfBasis'); bs.textContent = '';
+    for (const [k, t, v] of [['all', 'All living expenses', Mo.sp.all], ['ess', 'Essentials only', Mo.sp.ess]]) { const o = document.createElement('option'); o.value = k; o.textContent = `${t} (${fmt(v)}/mo)`; bs.append(o); }
+    bs.value = SF.basis === 'ess' ? 'ess' : 'all';
     const none = !Mo.any;
     const modeBox = $('sfMode'); modeBox.textContent = '';
     if (!Mo.rec && SF.mode === 'rec') SF.mode = 'plan';
@@ -3656,7 +3664,7 @@
       tb.append(tr);
     }
     tbl.append(tb);
-    $('sfNote').textContent = `Regular savings is what’s left each month after spending and bills (* = a month you edited). The target is ${Mo.months} months of essential spending, growing with ${P.infl}% inflation${Mo.asidesT > 0.5 ? ', plus set-asides (released when a one-off is paid from one)' : ''}. Cash starts from your emergency-fund holdings and earns ${Mo.cashRate.toFixed(1)}%/yr. ` +
+    $('sfNote').textContent = `Regular savings is what’s left each month after spending and bills (* = a month you edited). The target is ${Mo.months} months of ${spLabel} (${fmt(Mo.ess)}/month from your Monthly living expenses list), growing with ${P.infl}% inflation${Mo.asidesT > 0.5 ? ', plus set-asides (released when a one-off is paid from one)' : ''}. Cash starts from your emergency-fund holdings and earns ${Mo.cashRate.toFixed(1)}%/yr. ` +
       `Automatic investments (${fmt(Mo.fromPay)}/month, from each holding’s monthly contribution) come out of your savings${Mo.payroll > 0.5 ? `; ${fmt(Mo.payroll)}/month into retirement accounts is treated as a payroll deduction${SF.retTake ? '' : ' and isn’t taken from savings'}` : ''}. ` +
       `Investments start at ${fmt(Mo.inv0)} and grow at ${Mo.invRet.toFixed(1)}%/yr. Everything here is saved in this browser.`;
   }
@@ -3686,6 +3694,7 @@
   $('sfReset').onclick = () => { for (const k of Object.keys(SF.over)) delete SF.over[k]; savePrefs(); renderSf(); };
   for (const [id, k, lo, hi] of [['sfSavings', 'savings', -1e7, 1e8], ['sfRaise', 'raise', -20, 50], ['sfMonths', 'months', 0, 36]])
     $(id).onchange = () => { const v = $(id).value; SF[k] = v === '' ? null : clampNum(v, lo, hi, null); savePrefs(); renderSf(); };
+  $('sfBasis').onchange = () => { SF.basis = $('sfBasis').value; savePrefs(); renderSf(false); };
   $('sfRetTake').onchange = () => { SF.retTake = $('sfRetTake').checked; savePrefs(); renderSf(false); };
   window.addEventListener('resize', () => { if (!$('sfView').hidden) { clearTimeout(scResizeT); scResizeT = setTimeout(() => renderSf(false), 150); } });
 
