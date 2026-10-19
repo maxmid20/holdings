@@ -6,8 +6,8 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://api.airtable.com; form-action 'none'; base-uri 'none'; object-src 'none'">
 <meta name="referrer" content="no-referrer">
 <title>Holdings</title>
-<link rel="stylesheet" href="styles.css?v=2026-10-18k">
-<script src="app.js?v=2026-10-18k" defer></script>
+<link rel="stylesheet" href="styles.css?v=2026-10-18m">
+<script src="app.js?v=2026-10-18m" defer></script>
 </head>
 <body>
 <div class="wrap">
@@ -22,6 +22,11 @@
       <input type="file" id="importFile" accept="application/json,.json" hidden>
     </div>
   </header>
+
+  <nav class="tabs" id="tabs" aria-label="Views">
+    <a href="#" id="tabOverview" class="tab on" aria-current="page">Overview</a>
+    <a href="#scenarios" id="tabScen" class="tab">Scenarios</a>
+  </nav>
 
   <div id="banner" class="banner" role="status" hidden><span id="bannerText"></span><button type="button" id="bannerClose" aria-label="Dismiss">✕</button></div>
 
@@ -126,6 +131,71 @@
       <div class="section-head"><h2>Debts</h2><button class="btn primary" type="button" data-add="debt">+ Add debt</button></div>
       <div id="debts"></div>
       <p class="hint debt-plan" id="debtPlan"></p>
+    </div>
+  </div>
+
+  <div id="scView" hidden>
+    <div class="section">
+      <div class="section-head"><h2>Scenarios</h2><span class="hint">Model allocations, glide paths and return assumptions</span></div>
+      <div class="sc-bar">
+        <div class="sc-tabs" id="scTabs" role="group" aria-label="Scenarios"></div>
+        <div class="sc-new">
+          <select id="scPreset" class="btn" aria-label="Start a new scenario from">
+            <option value="current">Current mix, rebalanced</option>
+            <option value="growth">Growth 90/10</option>
+            <option value="balanced">Balanced 60/40</option>
+            <option value="conservative">Conservative 40/60</option>
+            <option value="glide">Glide 90/10 → 50/50 over 20 yrs</option>
+            <option value="permanent">Permanent portfolio (25 × 4)</option>
+            <option value="realassets">Real assets tilt</option>
+          </select>
+          <button class="btn primary" type="button" id="scNew">+ New scenario</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="proj-controls">
+          <label>Years<input id="scYears" type="number" min="1" max="50" step="1"></label>
+          <label>Inflation %<input id="scInfl" type="number" min="0" max="20" step="0.1"></label>
+          <label class="inline"><input id="scReal" type="checkbox"> Today's dollars</label>
+        </div>
+        <div class="sc-legend" id="scLegend"></div>
+        <div class="proj-chart" id="scChart"><div class="proj-tip" id="scTip" hidden></div></div>
+        <p class="hint" id="scRangeNote"></p>
+        <div class="proj-table-wrap"><table class="proj-table sc-table" id="scTable"></table></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="card" id="scAsis">
+        <p class="hint">“As is” projects each holding at its own expected return (or the default), exactly like the Projection on the overview. Create a scenario above to test a different allocation.</p>
+      </div>
+      <div class="card" id="scEditor" hidden>
+        <div class="sc-edit-head">
+          <div class="field"><label for="scName">Scenario name</label><input id="scName" maxlength="60" autocomplete="off"></div>
+          <div class="sc-actions">
+            <button class="btn" type="button" id="scDup">Duplicate</button>
+            <button class="btn danger" type="button" id="scDel">Delete</button>
+            <button class="btn primary" type="button" id="scSave">Save</button>
+          </div>
+        </div>
+        <div class="proj-controls">
+          <label>Glide over (years)<input id="scGlide" type="number" min="0" max="50" step="1" title="0 = keep the start mix"></label>
+          <label>Monthly contribution<input id="scMonthly" type="number" min="0" step="any" inputmode="decimal"></label>
+          <label>Contributions grow % / yr<input id="scGrowth" type="number" min="-20" max="30" step="0.5"></label>
+          <label class="inline"><input id="scRebal" type="checkbox" checked> Rebalance yearly</label>
+          <label class="inline"><input id="scHold" type="checkbox" checked> Keep property as is</label>
+        </div>
+        <div class="proj-table-wrap"><table class="proj-table sc-alloc" id="scAlloc"></table></div>
+        <p class="hint warn-text" id="scWarn"></p>
+        <p class="hint">Start % is the mix you move to now; with a glide period, it shifts to End % by that year. Return and volatility are yearly assumptions. <button type="button" class="link-btn" id="scReset">Reset assumptions</button></p>
+        <div id="scAllocWrap">
+          <h3 class="sub-head">Allocation over time</h3>
+          <div class="cp-legend" id="scAllocLegend"></div>
+          <div class="sc-alloc-bars" id="scAllocBars"></div>
+        </div>
+      </div>
+      <p class="hint" id="scNote"></p>
+      <p class="hint" id="scStore"></p>
     </div>
   </div>
 

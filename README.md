@@ -116,6 +116,16 @@ The **Projection** panel projects every holding forward, month by month:
 
 Projection settings (years, default return, inflation) are saved only in your browser. The owner filter applies, so you can project just your own holdings or a partner's.
 
+## Scenarios
+
+The **Scenarios** tab (or `#scenarios`) tests different allocations against each other, starting from what you hold today.
+
+- **Presets**: As is, Growth (90/10), Balanced (60/40), Conservative, Glide path (shifts from growth to bonds over the horizon), Permanent portfolio and Real assets. Start from any of them and edit the target mix, or start from your current mix.
+- **Assumptions**: each bucket has an expected return and volatility (equities 7% / 16%, bonds 4% / 6%, cash 3% / 1%, gold 4% / 15%, property 4% / 10%, commodities 3% / 18%, bitcoin 8% / 60%, other 4% / 10%). You can override them per scenario. They're long-run guesses, not forecasts.
+- **Mechanics**: monthly compounding, rebalanced to target once a year. With a glide path, the target moves in a straight line from the start mix to the end mix over the years you choose. Contributions (blank = your current monthly contributions) follow the target and can grow each year. Property can be held as is rather than sold to rebalance. Debts pay down on their own schedule and are subtracted from net worth.
+- **Chart**: projected net worth for up to 4 scenarios plus "As is" (dashed), with a shaded 10th–90th percentile range from 400 simulated market paths (correlated, fixed seed, so results don't jump between visits). The table shows the median at 5, 10, 20 and 30 years with the range, and the bars show how each allocation shifts over time.
+- **Saving**: add a **Scenarios** table to the base (`Name` primary field, `Config` long text) to keep scenarios in Airtable. Without it, scenarios are saved in this browser only.
+
 Two more tables power the look-through ("Your real mix") panel:
 
 - **Fund breakdown**: one row per fund per asset class (`Key`, `Fund ticker`, `Asset class`, `Weight %`, `As of`, `Source`). Rows with a `Source` starting with "Manual" are yours and always win. The daily sync writes "Auto" rows.
