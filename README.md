@@ -159,6 +159,24 @@ At the top of the overview: net worth over time (1M, 3M, YTD, 1Y, All) for the w
 
 Airtable's free plan allows 1,000 records per base, and the sync adds one Exposure history row a day, so you may eventually need to thin old rows or upgrade.
 
+## Savings forecast tab
+
+A 24-month, month-by-month cash-flow forecast answering: *is my emergency fund big enough all the way through, and how much can I invest on top?*
+
+- **Inputs:** monthly take-home pay (and an annual raise), your expenses list (growing with inflation), and debt payments. Tick the box if your expenses already include debt payments such as rent or a mortgage.
+- **Investment contributions:** taxable contributions come out of take-home pay. Retirement-account contributions are treated as payroll deductions unless you say otherwise.
+- **Interest on cash:** at your cash holdings' rates.
+- **Planned one-offs:** in or out, by month. A spend can be paid from a set-aside, which releases that set-aside from the target.
+- **Target:** N months of essential spending (default: the Plan tab's cash reserve), growing with inflation, plus set-asides.
+- **Results:**
+  - emergency fund now (in months);
+  - the lowest point and when it happens;
+  - **You could invest:** the largest steady extra monthly amount, plus a lump sum now, that keeps cash at or above the target in every month, one-offs included, and how much more you could invest after the tightest month.
+  - If you're below target, how long until you get there.
+- **Charts and table:** cash vs target and investments for "Your current plan" and "With recommended investing", plus a 24-row table.
+
+Pay, raise, the months setting and one-offs are saved in this browser.
+
 ## Plan tab
 
 **Target allocation.** Set a target % per asset class, by hand or starting from your current mix or a preset, with a ± band. Under **Measure against** you choose the base:

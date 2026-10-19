@@ -379,3 +379,22 @@ dialog.wide{width:min(760px,calc(100vw - 32px))}
 .env-why{font-size:14px;margin:6px 0 10px}
 .env-table td.env-best{font-weight:650}
 #envBalBars .sc-arow{grid-template-columns:72px 1fr auto}
+
+/* savings forecast */
+#sfIncome{width:130px}
+.sf-ev{display:grid;grid-template-columns:minmax(0,1.5fr) 140px 90px 120px minmax(0,1.2fr) auto;gap:8px;align-items:center;margin-top:8px}
+.sf-ev input,.sf-ev select{width:100%;min-width:0;background:var(--surface);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:7px 8px;font:inherit}
+.sf-ev input[type=number]{text-align:right;font-variant-numeric:tabular-nums}
+.sf-table td.low{color:var(--warn-ink);font-weight:600}
+.sf-table td.neg{color:var(--neg);font-weight:600}
+.sf-table tr.sf-ev-row td{background:var(--surface-2)}
+.proj-chart .l-cash{stroke:var(--s1);stroke-width:2;fill:none;stroke-linejoin:round}
+.proj-chart .l-cash2{stroke:var(--s1);stroke-width:1.5;fill:none;stroke-dasharray:2 3;opacity:.7}
+.proj-chart .l-tgt{stroke:var(--s2);stroke-width:2;fill:none;stroke-dasharray:6 4}
+.proj-chart .l-inv{stroke:var(--bk2);stroke-width:2;fill:none;stroke-linejoin:round}
+.proj-chart .l-inv2{stroke:var(--bk2);stroke-width:1.5;fill:none;stroke-dasharray:2 3;opacity:.7}
+.proj-chart .zero{stroke:var(--muted);stroke-width:1}
+.sw-cash{background:var(--s1)}.sw-tgt{background:repeating-linear-gradient(90deg,var(--s2) 0 6px,transparent 6px 9px)}.sw-inv{background:var(--bk2)}
+.sw-dot{background:repeating-linear-gradient(90deg,var(--muted) 0 2px,transparent 2px 5px)}
+@media (max-width:640px){.sf-ev{grid-template-columns:1fr 1fr auto}.sf-ev .sf-name{grid-column:1/3}.sf-ev .sf-x{grid-column:3;grid-row:1}.sf-ev .sf-fund{grid-column:1/-1}}
+.tabs{overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}.tabs::-webkit-scrollbar{display:none}.tab{flex:0 0 auto;white-space:nowrap}

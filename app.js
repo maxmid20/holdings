@@ -1240,7 +1240,7 @@
       ? 'Your data is stored only in this browser. Connect Airtable to sync it across devices, or use Export to back it up.'
       : 'Your data is stored in Airtable. Your token is encrypted on this device, and the app locks after 15 minutes of inactivity.';
     renderOwnerFilter();
-    $('scView').hidden = true; $('plView').hidden = true; $('mcView').hidden = true; $('tabs').hidden = locked;
+    $('scView').hidden = true; $('plView').hidden = true; $('mcView').hidden = true; $('sfView').hidden = true; $('tabs').hidden = locked;
     if (locked) {
       ownerView = '';
       ['totAssets', 'totDebts', 'totNet'].forEach(id => { $(id).textContent = '—'; });
@@ -1865,9 +1865,10 @@
 
   // ---- view switching (Overview | Scenarios) ----
   function showView() {
-    const sc = location.hash === '#scenarios' && mode !== 'locked', pl = location.hash === '#plan' && mode !== 'locked', mc = location.hash === '#macro' && mode !== 'locked';
-    $('content').hidden = mode === 'locked' || sc || pl || mc; $('scView').hidden = !sc; $('plView').hidden = !pl; $('mcView').hidden = !mc;
-    for (const [id, on] of [['tabOverview', !sc && !pl && !mc], ['tabScen', sc], ['tabPlan', pl], ['tabMacro', mc]]) { $(id).classList.toggle('on', on); $(id).setAttribute('aria-current', on ? 'page' : 'false'); }
+    const sc = location.hash === '#scenarios' && mode !== 'locked', pl = location.hash === '#plan' && mode !== 'locked', mc = location.hash === '#macro' && mode !== 'locked', sf = location.hash === '#savings' && mode !== 'locked';
+    $('content').hidden = mode === 'locked' || sc || pl || mc || sf; $('scView').hidden = !sc; $('plView').hidden = !pl; $('mcView').hidden = !mc; $('sfView').hidden = !sf;
+    for (const [id, on] of [['tabOverview', !sc && !pl && !mc && !sf], ['tabScen', sc], ['tabPlan', pl], ['tabSf', sf], ['tabMacro', mc]]) { $(id).classList.toggle('on', on); $(id).setAttribute('aria-current', on ? 'page' : 'false'); }
+    if (sf) renderSf();
     if (sc) renderScenarios();
     if (pl) renderPlan();
     if (mc) renderMacro();
@@ -3447,6 +3448,191 @@
     if (mode === 'locked') return;
     renderRegime(); renderEnv(); renderCpol(); renderStreams();
   }
+
+  // ---------- Savings forecast (24 months) ----------
+  // Month by month: take-home pay − spending − debt payments − investment contributions ± planned one-offs + interest
+  // on cash = the change in your emergency-fund cash. The target is N months of essential spending (growing with
+  // inflation) plus your set-asides. "You could invest" is the largest steady monthly amount, plus a lump sum now,
+  // that keeps cash at or above the target in every month of the forecast, one-offs included.
+  const SF = prefs.sf = Object.assign({ income: null, raise: 3, months: null, debtIn: false, retTake: false, mode: 'plan', events: [] }, prefs.sf || {});
+  if (!Array.isArray(SF.events)) SF.events = [];
+  const SF_N = 24;
+  const ymAdd = (n) => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() + n); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; };
+  const ymLabel = ym => { const [y, m] = ym.split('-').map(Number); return new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: 'short', year: '2-digit' }); };
+  function sfModel() {
+    const vis = visible(), sp = spendNow(), infl = (Number(P.infl) || 0) / 100;
+    const ess = sp.ess || sp.all, months = SF.months === null || SF.months === undefined || SF.months === '' ? (Number(POL.reserve) || 6) : Number(SF.months);
+    const fund = efHoldings(), cash0 = fund.reduce((a, i) => a + i.value, 0);
+    const cashRate = cash0 ? fund.reduce((a, i) => a + i.value * (has(i.rate) ? i.rate : SC_DEFAULTS.Cash[0]), 0) / cash0 : SC_DEFAULTS.Cash[0];
+    const fundIds = new Set(fund.map(i => i.id));
+    const invs = vis.filter(i => i.kind === 'asset' && i.value > 0 && !i.noFx && !fundIds.has(i.id) && !(mainBucket(i) === 'Property' && !i.ticker) && !['Vehicles', 'Collectibles'].includes(i.category));
+    const inv0 = invs.reduce((a, i) => a + i.value, 0), invRet = inv0 ? invs.reduce((a, i) => a + i.value * fwdOf(i), 0) / inv0 : SC_DEFAULTS.Equities[0];
+    const fromPay = invs.filter(i => SF.retTake || liquidityOf(i) !== 'locked').reduce((a, i) => a + (Number(i.monthly) || 0), 0);
+    const payroll = invs.filter(i => !SF.retTake && liquidityOf(i) === 'locked').reduce((a, i) => a + (Number(i.monthly) || 0), 0);
+    const debts = vis.filter(i => i.kind === 'debt' && i.value > 0 && !i.noFx).map(i => { const t = debtTerms(i, i.value, i.monthly); return { name: i.name, b: i.value, ...t }; });
+    const asides0 = asides.map(a => ({ id: a.id, name: a.name, v: a.amount === null ? 0 : (conv(a.amount, a.currency) || 0) }));
+    const income = Number(SF.income) || 0, raise = (Number(SF.raise) || 0) / 100;
+    const evs = SF.events.filter(e => e && /^\d{4}-\d{2}$/.test(e.month || '') && Number(e.amount));
+    // one pass with an extra monthly investment X and a lump L invested now
+    const run = (X, L) => {
+      let cash = cash0 - L, inv = inv0 + L; const aside = Object.fromEntries(asides0.map(a => [a.id, a.v])); const db = debts.map(d => ({ ...d }));
+      const rows = [];
+      for (let t = 1; t <= SF_N; t++) {
+        const ym = ymAdd(t), inc = income * Math.pow(1 + raise, Math.floor((t - 1) / 12)), grow = Math.pow(1 + infl, t / 12);
+        const spend = sp.all * grow;
+        let debt = 0;
+        for (const d of db) { if (d.b <= 0.005) continue; if (d.wo !== null && t > d.wo) { d.b = 0; continue; } const owed = d.b * (1 + d.rm), p = Math.min(d.pay, owed); d.b = owed - p; debt += p; }
+        const debtOut = SF.debtIn ? 0 : debt;
+        let ev = 0; const evNames = [];
+        for (const e of evs) if (e.month === ym) {
+          const amt = Number(e.amount) * (e.dir === 'in' ? 1 : -1); ev += amt; evNames.push(e.name || (amt >= 0 ? 'Money in' : 'Spend'));
+          if (amt < 0 && e.fund && aside[e.fund] !== undefined) aside[e.fund] = Math.max(0, aside[e.fund] + amt);   // paid from a set-aside: it's released
+        }
+        const interest = cash > 0 ? cash * (Math.pow(1 + cashRate / 100, 1 / 12) - 1) : 0;
+        cash += inc - spend - debtOut - fromPay - X + ev + interest;
+        inv = inv * Math.pow(1 + invRet / 100, 1 / 12) + fromPay + payroll + X;
+        const target = months * ess * grow + Object.values(aside).reduce((a, b) => a + b, 0);
+        rows.push({ t, ym, inc, spend, debt: debtOut, debtAll: debt, invest: fromPay + X, payroll, ev, evNames, interest, cash, target, inv, cover: (ess * grow) ? Math.max(0, cash - Object.values(aside).reduce((a, b) => a + b, 0)) / (ess * grow) : null });
+      }
+      return rows;
+    };
+    const plan = run(0, 0);
+    const target0 = months * ess + asides0.reduce((a, b) => a + b.v, 0), slack0 = cash0 - target0;
+    // recommended: largest steady X, then lump L, keeping cash ≥ target every month
+    let X = Infinity; for (const r of plan) X = Math.min(X, (r.cash - r.target) / r.t);
+    const slackMin = Math.min(slack0, ...plan.map(r => r.cash - r.target));
+    let rec = null;
+    if (slack0 >= 0 && X > 0) {
+      X = Math.max(0, Math.floor(X / 50) * 50);
+      const after = run(X, 0); const L = Math.max(0, Math.floor(Math.min(slack0, ...after.map(r => r.cash - r.target)) / 100) * 100);
+      rec = { X, L, rows: run(X, L) };
+      // after the tightest month, cash builds again: how much more could go in from then on
+      const rr = rec.rows, tb = rr.reduce((k, r, i) => r.cash - r.target < rr[k].cash - rr[k].target ? i : k, 0);
+      if (tb < rr.length - 1) {
+        let X2 = Infinity; for (let i = tb + 1; i < rr.length; i++) X2 = Math.min(X2, ((rr[i].cash - rr[i].target) - (rr[tb].cash - rr[tb].target)) / (i - tb));
+        X2 = Math.floor(X2 / 50) * 50;
+        if (X2 >= 100) rec.after = { ym: rr[tb + 1].ym, extra: X2 };
+      }
+    } else if (slack0 >= 0) {
+      const L = Math.max(0, Math.floor(slackMin / 100) * 100);
+      rec = { X: 0, L, rows: run(0, L) };
+    }
+    // if below target: how long to reach it at the current plan
+    const reach = slack0 < 0 ? plan.find(r => r.cash >= r.target) : null;
+    return { plan, rec, cash0, target0, slack0, ess, months, income, fromPay, payroll, inv0, invRet, cashRate, debts, sp, reach, asidesT: asides0.reduce((a, b) => a + b.v, 0) };
+  }
+  function sfChart(chart, tip, rows, lines, labels) {
+    [...chart.querySelectorAll('svg')].forEach(n => n.remove()); tip.hidden = true;
+    const W = Math.max(300, Math.round(chart.clientWidth || 640)), narrow = W < 520, H = narrow ? 200 : 230, L = narrow ? 48 : 58, R = 12, T = 10, B = 24, pw = W - L - R, ph = H - T - B;
+    const vals = lines.flatMap(l => l.pts.filter(v => v !== null)); let lo = Math.min(0, ...vals), hi = Math.max(...vals); if (hi === lo) hi = lo + 1;
+    const step = niceStep(hi - lo); lo = Math.floor(lo / step) * step; hi = Math.ceil(hi / step) * step;
+    const n = labels.length - 1, x = i => L + i / n * pw, y = v => T + (1 - (v - lo) / (hi - lo)) * ph;
+    const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: 'img', 'aria-label': lines.map(l => `${l.label}: ${fmt(l.pts[0])} now to ${fmt(l.pts[n])} in ${n} months`).join('; ') + '. The table below has every month.' });
+    for (let v = lo; v <= hi + step / 2; v += step) { el('line', { class: 'grid', x1: L, x2: L + pw, y1: y(v), y2: y(v) }, svg); el('text', { class: 'axis-t', x: L - 8, y: y(v) + 4, 'text-anchor': 'end' }, svg).textContent = fmtShort(v); }
+    if (lo < 0) el('line', { class: 'zero', x1: L, x2: L + pw, y1: y(0), y2: y(0) }, svg);
+    for (let i = 0; i <= n; i += narrow ? 6 : 3) el('text', { class: 'axis-t', x: x(i), y: H - 6, 'text-anchor': i === 0 ? 'start' : i === n ? 'end' : 'middle' }, svg).textContent = labels[i];
+    for (const l of lines) el('path', { class: l.cls, d: l.pts.map((v, i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(v).toFixed(1)).join(' ') }, svg);
+    const cross = el('line', { class: 'cross', y1: T, y2: T + ph, visibility: 'hidden' }, svg);
+    const hit = el('rect', { x: L, y: T, width: pw, height: ph, fill: 'transparent' }, svg);
+    const show = evt => {
+      const r = svg.getBoundingClientRect(), i = Math.max(0, Math.min(n, Math.round(((evt.clientX - r.left) * W / r.width - L) / pw * n)));
+      cross.setAttribute('x1', x(i)); cross.setAttribute('x2', x(i)); cross.setAttribute('visibility', 'visible');
+      tip.textContent = ''; const h = document.createElement('div'); h.textContent = labels[i]; tip.append(h);
+      for (const l of lines) { const row = document.createElement('div'); const sw = document.createElement('i'); sw.className = 'sw ' + l.sw; const b = document.createElement('b'); b.textContent = fmt(l.pts[i]); row.append(sw, l.label + ' ', b); tip.append(row); }
+      const ev = i > 0 && rows[i - 1] && rows[i - 1].evNames.length ? rows[i - 1].evNames.join(', ') : '';
+      if (ev) { const e = document.createElement('div'); e.className = 'muted'; e.textContent = ev; tip.append(e); }
+      tip.hidden = false; const left = x(i) / W * r.width; tip.style.left = Math.min(Math.max(0, left - tip.offsetWidth / 2), r.width - tip.offsetWidth) + 'px';
+    };
+    hit.addEventListener('pointermove', show); hit.addEventListener('pointerdown', show); hit.addEventListener('pointerleave', () => { cross.setAttribute('visibility', 'hidden'); tip.hidden = true; });
+    chart.prepend(svg);
+  }
+  function renderSf(rebuildEvents = true) {
+    if (mode === 'locked') return;
+    const Mo = sfModel();
+    $('sfIncome').value = SF.income ?? ''; $('sfIncome').placeholder = 'e.g. 9000'; $('sfRaise').value = SF.raise; $('sfMonths').value = Mo.months; $('sfDebtIn').checked = !!SF.debtIn; $('sfRetTake').checked = !!SF.retTake;
+    const covNow = Mo.ess ? Math.max(0, Mo.cash0 - Mo.asidesT) / Mo.ess : null;
+    $('sfNow').textContent = covNow === null ? fmt(Mo.cash0) : `${fmtMonths(covNow)} mo`;
+    $('sfNowSub').textContent = Mo.ess ? `${fmt(Mo.cash0)} cash${Mo.asidesT > 0.5 ? `, ${fmt(Mo.asidesT)} of it set aside` : ''}; target ${Mo.months} months = ${fmt(Mo.target0)}.` : 'Add monthly expenses on the overview to set a target.';
+    const noIncome = !(Mo.income > 0);
+    const modeBox = $('sfMode'); modeBox.textContent = '';
+    if (!Mo.rec && SF.mode === 'rec') SF.mode = 'plan';
+    for (const [k, label] of [['plan', 'Your current plan'], ['rec', 'With recommended investing']]) {
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'chip' + (SF.mode === k ? ' on' : ''); b.textContent = label; b.setAttribute('aria-pressed', String(SF.mode === k));
+      if (k === 'rec' && (!Mo.rec || noIncome)) { b.disabled = true; b.title = noIncome ? 'Enter your take-home pay first' : 'Your cash is below target, so there’s nothing extra to invest yet'; }
+      b.onclick = () => { SF.mode = k; savePrefs(); renderSf(); }; modeBox.append(b);
+    }
+    const rows = SF.mode === 'rec' && Mo.rec ? Mo.rec.rows : Mo.plan;
+    const low = rows.reduce((a, r) => r.cash - r.target < a.cash - a.target ? r : a, rows[0]);
+    $('sfLow').textContent = noIncome ? '—' : `${low.cover === null ? fmtShort(low.cash) : fmtMonths(low.cover) + ' mo'}`;
+    $('sfLowSub').textContent = noIncome ? 'Enter your take-home pay to forecast.' : `${ymLabel(low.ym)}: ${fmt(low.cash)} cash vs ${fmt(low.target)} target${low.evNames.length ? ` (${low.evNames.join(', ')})` : ''}.`;
+    $('sfLow').classList.toggle('neg', !noIncome && low.cash < low.target);
+    if (noIncome) { $('sfRec').textContent = '—'; $('sfRecSub').textContent = ''; }
+    else if (Mo.rec) { $('sfRec').textContent = `${fmt(Mo.rec.X)}/mo`; $('sfRecSub').textContent = `${Mo.rec.L > 0 ? `plus ${fmt(Mo.rec.L)} now, ` : ''}on top of the ${fmt(Mo.fromPay)}/month you already invest from pay, while never dropping below the target.` + (Mo.rec.after ? ` From ${ymLabel(Mo.rec.after.ym)} you could raise it to ${fmt(Mo.rec.X + Mo.rec.after.extra)}/month.` : ''); }
+    else { $('sfRec').textContent = '$0'; $('sfRecSub').textContent = Mo.reach ? `Build cash first: at your current plan you reach the target in ${ymLabel(Mo.reach.ym)}.` : `Build cash first: you’re ${fmt(-Mo.slack0)} below target and the forecast doesn’t get there in 24 months.`; }
+    // verdict
+    const planLow = Mo.plan.reduce((a, r) => r.cash - r.target < a.cash - a.target ? r : a, Mo.plan[0]), endP = Mo.plan[SF_N - 1];
+    const surplus = Mo.income - Mo.sp.all - (SF.debtIn ? 0 : (Mo.plan[0].debtAll || 0)) - Mo.fromPay;
+    $('sfVerdict').textContent = noIncome ? 'Enter your monthly take-home pay to forecast your cash and investments for the next 24 months.'
+      : `Each month you bring in ${fmt(Mo.income)} and spend about ${fmt(Mo.sp.all)}${!SF.debtIn && Mo.plan[0].debtAll > 0.5 ? ` plus ${fmt(Mo.plan[0].debtAll)} of debt payments` : ''}, and invest ${fmt(Mo.fromPay)} from pay: ${surplus >= 0 ? 'a surplus' : 'a shortfall'} of about ${fmt(Math.abs(surplus))}/month. ` +
+        (Mo.slack0 < 0 ? `Your emergency fund is ${fmt(-Mo.slack0)} below target. ` : planLow.cash < planLow.target ? `On your current plan cash dips below target in ${ymLabel(planLow.ym)}. ` : '') +
+        (Mo.rec && Mo.rec.X + Mo.rec.L > 0 ? `You could invest an extra ${fmt(Mo.rec.X)}/month${Mo.rec.L > 0 ? ` and ${fmt(Mo.rec.L)} now` : ''} and still keep ${Mo.months} months of cover in every month.` : endP.cash > endP.target ? `Cash ends at ${fmt(endP.cash)} vs ${fmt(endP.target)} target.` : '');
+    // charts
+    const labels = ['Now', ...rows.map(r => ymLabel(r.ym))];
+    const tgt = [Mo.target0, ...rows.map(r => r.target)];
+    const lines1 = [{ label: SF.mode === 'rec' ? 'Cash (with investing)' : 'Cash', cls: 'l-cash', sw: 'sw-cash', pts: [SF.mode === 'rec' && Mo.rec ? Mo.cash0 - Mo.rec.L : Mo.cash0, ...rows.map(r => r.cash)] }, { label: 'Target', cls: 'l-tgt', sw: 'sw-tgt', pts: tgt }];
+    if (SF.mode === 'rec' && Mo.rec) lines1.push({ label: 'Cash (current plan)', cls: 'l-cash2', sw: 'sw-dot', pts: [Mo.cash0, ...Mo.plan.map(r => r.cash)] });
+    const lg1 = $('sfLegend1'); lg1.textContent = ''; for (const l of lines1) { const s = document.createElement('span'); const i = document.createElement('i'); i.className = 'sw ' + l.sw; s.append(i, l.label); lg1.append(s); }
+    const lines2 = [{ label: SF.mode === 'rec' ? 'Investments (with investing)' : 'Investments', cls: 'l-inv', sw: 'sw-inv', pts: [SF.mode === 'rec' && Mo.rec ? Mo.inv0 + Mo.rec.L : Mo.inv0, ...rows.map(r => r.inv)] }];
+    if (SF.mode === 'rec' && Mo.rec) lines2.push({ label: 'Investments (current plan)', cls: 'l-inv2', sw: 'sw-dot', pts: [Mo.inv0, ...Mo.plan.map(r => r.inv)] });
+    const lg2 = $('sfLegend2'); lg2.textContent = ''; for (const l of lines2) { const s = document.createElement('span'); const i = document.createElement('i'); i.className = 'sw ' + l.sw; s.append(i, l.label); lg2.append(s); }
+    if (noIncome) { [$('sfChart1'), $('sfChart2')].forEach(c => [...c.querySelectorAll('svg')].forEach(n => n.remove())); }
+    else { sfChart($('sfChart1'), $('sfTip1'), rows, lines1, labels); sfChart($('sfChart2'), $('sfTip2'), rows, lines2, labels); }
+    // events editor (only rebuilt for structural changes, so editing a field never swaps out the next one you click)
+    if (rebuildEvents || !$('sfEvents').querySelector('.sf-ev')) renderSfEvents();
+    // table
+    const tbl = $('sfTable'); tbl.textContent = '';
+    const hr = document.createElement('tr'); ['Month', 'Pay', 'Spending', 'Debts', 'Invested', 'One-offs', 'Interest', 'Cash', 'Target', 'Cover'].forEach(t => { const th = document.createElement('th'); th.textContent = t; hr.append(th); });
+    const th = document.createElement('thead'); th.append(hr); tbl.append(th);
+    const tb = document.createElement('tbody');
+    if (!noIncome) for (const r of rows) {
+      const tr = document.createElement('tr'); if (r.ev) tr.className = 'sf-ev-row';
+      const cells = [ymLabel(r.ym), fmtShort(r.inc), '−' + fmtShort(r.spend), r.debt > 0.5 ? '−' + fmtShort(r.debt) : '—', r.invest > 0.5 ? '−' + fmtShort(r.invest) : '—', r.ev ? (r.ev > 0 ? '+' : '−') + fmtShort(Math.abs(r.ev)) : '—', '+' + fmtShort(r.interest), fmtShort(r.cash), fmtShort(r.target), r.cover === null ? '—' : fmtMonths(r.cover) + ' mo'];
+      cells.forEach((t, k) => { const td = document.createElement('td'); td.textContent = t; if (k === 5 && r.evNames.length) td.title = r.evNames.join(', '); if (k === 7 && r.cash < 0) td.className = 'neg'; else if ((k === 7 || k === 9) && r.cash < r.target) td.className = 'low'; tr.append(td); });
+      tb.append(tr);
+    }
+    tbl.append(tb);
+    $('sfNote').textContent = `Spending is your expenses list (all of it), growing with ${P.infl}% inflation; the target uses essential spending${Mo.asidesT > 0.5 ? ' plus set-asides (released when a one-off is paid from one)' : ''}. Cash starts from your emergency-fund holdings and earns ${Mo.cashRate.toFixed(1)}%/yr. ` +
+      `Investments start at ${fmt(Mo.inv0)} and grow at ${Mo.invRet.toFixed(1)}%/yr (each holding’s expected return or its asset class assumption), plus contributions${Mo.payroll > 0.5 ? `, including ${fmt(Mo.payroll)}/month into retirement accounts from payroll (not from take-home pay)` : ''}. ` +
+      `${SF.debtIn ? 'Debt payments are assumed to be in your expenses.' : 'Debt payments are added on top of expenses; tick the box if your expenses already include them (e.g. rent or mortgage).'} Pay, raise and one-offs are saved in this browser.`;
+  }
+  function renderSfEvents() {
+    const box = $('sfEvents');
+    box.textContent = '';
+    if (!SF.events.length) { const e = document.createElement('div'); e.className = 'mv-empty'; e.textContent = 'Add bonuses, tax bills, a house deposit, school fees, a car: anything big and one-off in the next two years.'; box.append(e); return; }
+    SF.events.forEach((ev, k) => {
+      const row = document.createElement('div'); row.className = 'sf-ev';
+      const mk = (cls, type, val, label, on, ph) => { const i = document.createElement('input'); i.className = cls; i.type = type; i.value = val ?? ''; if (ph) i.placeholder = ph; i.setAttribute('aria-label', label); i.onchange = () => { on(i.value); savePrefs(); renderSf(false); }; return i; };
+      const name = mk('sf-name', 'text', ev.name, `One-off ${k + 1} name`, v => { ev.name = v.slice(0, 60); }, 'e.g. Annual bonus'); name.maxLength = 60;
+      const month = mk('sf-month', 'month', ev.month, `One-off ${k + 1} month`, v => { ev.month = /^\d{4}-\d{2}$/.test(v) ? v : ''; });
+      const dir = document.createElement('select'); dir.className = 'sf-dir'; dir.setAttribute('aria-label', `One-off ${k + 1} in or out`);
+      for (const [v, t] of [['out', 'Out'], ['in', 'In']]) { const o = document.createElement('option'); o.value = v; o.textContent = t; dir.append(o); }
+      dir.value = ev.dir === 'in' ? 'in' : 'out'; dir.onchange = () => { ev.dir = dir.value; savePrefs(); renderSf(); };
+      const amt = mk('sf-amt', 'number', ev.amount, `One-off ${k + 1} amount`, v => { ev.amount = Math.max(0, Number(v) || 0); }, 'Amount'); amt.min = '0';
+      const fund = document.createElement('select'); fund.className = 'sf-fund'; fund.setAttribute('aria-label', `One-off ${k + 1} paid from`);
+      const o0 = document.createElement('option'); o0.value = ''; o0.textContent = ev.dir === 'in' ? 'Into cash' : 'Paid from cash'; fund.append(o0);
+      if (ev.dir !== 'in') for (const a of asides) { const o = document.createElement('option'); o.value = a.id; o.textContent = `Paid from set-aside: ${a.name}`; fund.append(o); }
+      fund.value = [...fund.options].some(o => o.value === ev.fund) ? ev.fund : ''; fund.onchange = () => { ev.fund = fund.value; savePrefs(); renderSf(false); };
+      const x = document.createElement('button'); x.type = 'button'; x.className = 'icon-btn sf-x'; x.textContent = '×'; x.setAttribute('aria-label', `Remove one-off ${k + 1}`);
+      x.onclick = () => { SF.events.splice(k, 1); savePrefs(); renderSf(); };
+      row.append(name, month, dir, amt, fund, x); box.append(row);
+    });
+  }
+  $('sfAdd').onclick = () => { SF.events.push({ name: '', month: ymAdd(3), dir: 'out', amount: 0, fund: '' }); savePrefs(); renderSf(); const ins = $('sfEvents').querySelectorAll('.sf-name'); if (ins.length) ins[ins.length - 1].focus(); };
+  for (const [id, k, lo, hi] of [['sfIncome', 'income', 0, 1e8], ['sfRaise', 'raise', -20, 50], ['sfMonths', 'months', 0, 36]])
+    $(id).onchange = () => { const v = $(id).value; SF[k] = v === '' ? null : clampNum(v, lo, hi, null); savePrefs(); renderSf(); };
+  $('sfDebtIn').onchange = () => { SF.debtIn = $('sfDebtIn').checked; savePrefs(); renderSf(); };
+  $('sfRetTake').onchange = () => { SF.retTake = $('sfRetTake').checked; savePrefs(); renderSf(); };
+  window.addEventListener('resize', () => { if (!$('sfView').hidden) { clearTimeout(scResizeT); scResizeT = setTimeout(renderSf, 150); } });
 
   // ---------- Start ----------
   if (mode === 'local') { fx = localFx(); loadScenarios(); }
