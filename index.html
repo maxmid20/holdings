@@ -6,8 +6,8 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://api.airtable.com; form-action 'none'; base-uri 'none'; object-src 'none'">
 <meta name="referrer" content="no-referrer">
 <title>Holdings</title>
-<link rel="stylesheet" href="styles.css?v=2026-10-19k">
-<script src="app.js?v=2026-10-19k" defer></script>
+<link rel="stylesheet" href="styles.css?v=2026-10-19l">
+<script src="app.js?v=2026-10-19l" defer></script>
 </head>
 <body>
 <div class="wrap">
@@ -256,24 +256,31 @@
           <label class="inline"><input id="sfRetTake" type="checkbox"> Retirement contributions come out of my savings</label>
         </div>
         <p class="rk-verdict" id="sfVerdict"></p>
-        <div class="sc-tabs env-opts" id="sfMode" role="group" aria-label="Plan to show"></div>
         <div class="mv-stats">
           <div><div class="label">Emergency fund now</div><div class="ret-big" id="sfNow"></div><div class="hint" id="sfNowSub"></div></div>
           <div><div class="label">Lowest point</div><div class="ret-big" id="sfLow"></div><div class="hint" id="sfLowSub"></div></div>
-          <div><div class="label">You could invest</div><div class="ret-big" id="sfRec"></div><div class="hint" id="sfRecSub"></div></div>
+          <div><div class="label">In 24 months</div><div class="ret-big" id="sfEnd"></div><div class="hint" id="sfEndSub"></div></div>
         </div>
+        <div class="sf-decide" id="sfDecide" hidden></div>
         <h3 class="mv-h">Savings &amp; bonuses by month</h3>
         <p class="hint" id="sfFlowSub"></p>
         <div class="proj-legend"><span><i class="sw sw-sav"></i>Regular savings</span><span><i class="sw sw-bon"></i>Bonus</span><span><i class="sw sw-in"></i>One-off in</span><span><i class="sw sw-out"></i>One-off out</span></div>
         <div class="proj-chart" id="sfFlowChart"><div class="proj-tip" id="sfFlowTip" hidden></div></div>
         <div class="sf-grid" id="sfGrid"></div>
         <div class="mv-actions"><button class="btn" type="button" id="sfReset" hidden>Reset edited months to the regular amount</button></div>
+        <h3 class="mv-h">Investment contributions by month</h3>
+        <p class="hint" id="sfCSub"></p>
+        <div class="proj-table-wrap sf-cwrap"><table class="sf-cgrid" id="sfCGrid"></table></div>
+        <div class="mv-actions"><select id="sfCAdd" aria-label="Add a contribution to another holding"></select><button class="btn" type="button" id="sfCReset" hidden>Reset contributions to Airtable amounts</button></div>
         <h3 class="mv-h">Emergency fund vs target</h3>
         <div class="proj-legend" id="sfLegend1"></div>
         <div class="proj-chart" id="sfChart1"><div class="proj-tip" id="sfTip1" hidden></div></div>
-        <h3 class="mv-h">Investments</h3>
+        <h3 class="mv-h">Portfolio composition over time</h3>
+        <p class="hint">Everything you own, by asset class, as contributions go in and each holding grows at its expected return.</p>
+        <div class="sc-tabs env-opts" id="sfCompMode" role="group" aria-label="Show as"></div>
         <div class="proj-legend" id="sfLegend2"></div>
         <div class="proj-chart" id="sfChart2"><div class="proj-tip" id="sfTip2" hidden></div></div>
+        <div class="proj-table-wrap"><table class="proj-table sf-comp" id="sfCompTable"></table></div>
         <h3 class="mv-h">Planned one-offs</h3>
         <div id="sfEvents"></div>
         <div class="mv-actions"><button class="btn" type="button" id="sfAdd">+ Add one-off</button></div>

@@ -3576,49 +3576,74 @@
   }
 
   // ---------- Savings forecast (24 months) ----------
-  // Month by month: regular savings (what's left after spending and bills) + bonuses − automatic investment
-  // contributions ± planned one-offs + interest on cash = the change in your emergency-fund cash. Each month's
-  // savings and bonus can be overridden. The target is N months of essential spending (growing with inflation) plus
-  // set-asides. "You could invest" is the largest steady extra monthly amount, plus a lump sum now, that keeps cash at
-  // or above the target in every month of the forecast.
-  const SF = prefs.sf = Object.assign({ savings: null, raise: 0, months: null, retTake: false, mode: 'plan', basis: 'all', events: [], over: {}, bonus: {} }, prefs.sf || {});
+  // Month by month: regular savings (what's left after spending and bills) + bonuses − investment contributions paid
+  // from savings ± planned one-offs + interest = the change in your emergency-fund cash. Each holding's monthly
+  // contribution comes from Airtable ("Monthly contribution") and can be changed for the forecast, for every month or
+  // for specific months; "Extra investing" is a forecast-only line into an asset class of your choice. Every asset
+  // grows at its expected return, so the whole portfolio's composition can be followed month by month. The target is
+  // N months of living expenses (growing with inflation); cash set aside for goals is kept out of both sides.
+  // "You could invest" is the largest steady extra monthly amount, plus a lump sum now, that keeps cash at or above
+  // the target in every month of the forecast.
+  const SF = prefs.sf = Object.assign({ savings: null, raise: 0, months: null, retTake: false, basis: 'all', events: [], over: {}, bonus: {}, cBase: {}, cOver: {}, cRows: [], extra: {}, comp: 'pct' }, prefs.sf || {});
   if (!Array.isArray(SF.events)) SF.events = [];
-  if (!SF.over || typeof SF.over !== 'object') SF.over = {};
-  if (!SF.bonus || typeof SF.bonus !== 'object') SF.bonus = {};
-  delete SF.income; delete SF.debtIn;   // older version asked for take-home pay instead of savings
+  for (const k of ['over', 'bonus', 'cBase', 'cOver', 'extra']) if (!SF[k] || typeof SF[k] !== 'object' || Array.isArray(SF[k])) SF[k] = {};
+  if (!Array.isArray(SF.cRows)) SF.cRows = [];
+  SF.extra = Object.assign({ base: null, over: {}, bucket: 'Equities' }, SF.extra); if (!SF.extra.over || typeof SF.extra.over !== 'object') SF.extra.over = {};
+  if (!BUCKETS.includes(SF.extra.bucket) || ['Cash', 'Property'].includes(SF.extra.bucket)) SF.extra.bucket = 'Equities';
+  delete SF.income; delete SF.debtIn; delete SF.mode;   // older versions: take-home pay, debt box, plan/recommended toggle
   const SF_N = 24;
   const ymAdd = (n) => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() + n); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; };
   const ymLabel = ym => { const [y, m] = ym.split('-').map(Number); return new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: 'short', year: '2-digit' }); };
   const sfBase = t => (Number(SF.savings) || 0) * Math.pow(1 + (Number(SF.raise) || 0) / 100, Math.floor((t - 1) / 12));
   const sfSav = (t, ym) => has(SF.over[ym]) ? Number(SF.over[ym]) : sfBase(t);
   const sfBon = ym => Math.max(0, Number(SF.bonus[ym]) || 0);
+  const sfCBase = i => has(SF.cBase[i.id]) ? Math.max(0, Number(SF.cBase[i.id])) : (Number(i.monthly) || 0);
+  const sfC = (i, ym) => { const o = SF.cOver[i.id]; return o && has(o[ym]) ? Math.max(0, Number(o[ym])) : sfCBase(i); };
+  const sfXBase = () => Math.max(0, Number(SF.extra.base) || 0);
+  const sfX = ym => has(SF.extra.over[ym]) ? Math.max(0, Number(SF.extra.over[ym])) : sfXBase();
+  const sfFromSav = i => SF.retTake || liquidityOf(i) !== 'locked';
+  function sfAssets() {
+    const vis = visible(), fund = efHoldings(), fundIds = new Set(fund.map(i => i.id));
+    const assets = vis.filter(i => i.kind === 'asset' && i.value > 0 && !i.noFx);
+    const invs = assets.filter(i => !fundIds.has(i.id) && !(mainBucket(i) === 'Property' && !i.ticker) && !['Vehicles', 'Collectibles'].includes(i.category));
+    const other = assets.filter(i => !fundIds.has(i.id) && !invs.includes(i));
+    // rows in the contributions grid: holdings with a contribution in Airtable, or one you've added or changed here
+    const rows = invs.filter(i => (Number(i.monthly) || 0) > 0 || SF.cRows.includes(i.id) || has(SF.cBase[i.id]) || Object.keys(SF.cOver[i.id] || {}).length);
+    return { assets, fund, invs, other, rows };
+  }
   function sfModel() {
-    const vis = visible(), sp = spendNow(), infl = (Number(P.infl) || 0) / 100;
+    const sp = spendNow(), infl = (Number(P.infl) || 0) / 100;
     const ess = SF.basis === 'ess' ? (sp.ess || sp.all) : sp.all, months = SF.months === null || SF.months === undefined || SF.months === '' ? (Number(POL.reserve) || 6) : Number(SF.months);
-    const fund = efHoldings(), cash0 = fund.reduce((a, i) => a + i.value, 0);
+    const A = sfAssets(), fund = A.fund, cash0 = fund.reduce((a, i) => a + i.value, 0);
     const cashRate = cash0 ? fund.reduce((a, i) => a + i.value * (has(i.rate) ? i.rate : SC_DEFAULTS.Cash[0]), 0) / cash0 : SC_DEFAULTS.Cash[0];
-    const fundIds = new Set(fund.map(i => i.id));
-    const invs = vis.filter(i => i.kind === 'asset' && i.value > 0 && !i.noFx && !fundIds.has(i.id) && !(mainBucket(i) === 'Property' && !i.ticker) && !['Vehicles', 'Collectibles'].includes(i.category));
-    const inv0 = invs.reduce((a, i) => a + i.value, 0), invRet = inv0 ? invs.reduce((a, i) => a + i.value * fwdOf(i), 0) / inv0 : SC_DEFAULTS.Equities[0];
-    const fromPay = invs.filter(i => SF.retTake || liquidityOf(i) !== 'locked').reduce((a, i) => a + (Number(i.monthly) || 0), 0);
-    const payroll = invs.filter(i => !SF.retTake && liquidityOf(i) === 'locked').reduce((a, i) => a + (Number(i.monthly) || 0), 0);
+    const mixB = i => { const o = {}; for (const [c, w] of Object.entries(mixFor(i))) o[bucketOf(c)] = (o[bucketOf(c)] || 0) + w / 100; return o; };
+    const grow = [...A.invs, ...A.other].map(i => ({ i, g: Math.pow(1 + fwdOf(i) / 100, 1 / 12), mix: mixB(i) }));
+    const xB = SF.extra.bucket, xG = Math.pow(1 + newPos(xB, A.assets).fwd / 100, 1 / 12);
     const asides0 = asides.map(a => ({ id: a.id, name: a.name, v: a.amount === null ? 0 : (conv(a.amount, a.currency) || 0) }));
     const evs = SF.events.filter(e => e && /^\d{4}-\d{2}$/.test(e.month || '') && Number(e.amount));
+    const compOf = (vals, xv, cashAll) => {
+      const c = Object.fromEntries(BUCKETS.map(b => [b, 0]));
+      grow.forEach((g, k) => { for (const [b, w] of Object.entries(g.mix)) c[b] += vals[k] * w; });
+      c[xB] += xv; c.Cash += Math.max(0, cashAll); return c;
+    };
+    const invSum = (vals, xv) => grow.reduce((a, g, k) => a + (A.invs.includes(g.i) ? vals[k] : 0), 0) + xv;
     const run = (X, L) => {
-      let cash = cash0 - L, inv = inv0 + L; const aside = Object.fromEntries(asides0.map(a => [a.id, a.v]));
+      let cash = cash0 - L, xv = L; const vals = grow.map(g => g.i.value); const aside = Object.fromEntries(asides0.map(a => [a.id, a.v]));
       const rows = [];
       for (let t = 1; t <= SF_N; t++) {
-        const ym = ymAdd(t), grow = Math.pow(1 + infl, t / 12), sav = sfSav(t, ym), bonus = sfBon(ym);
+        const ym = ymAdd(t), gI = Math.pow(1 + infl, t / 12), sav = sfSav(t, ym), bonus = sfBon(ym);
         let ev = 0; const evNames = [];
         for (const e of evs) if (e.month === ym) {
           const amt = Number(e.amount) * (e.dir === 'in' ? 1 : -1); ev += amt; evNames.push(e.name || (amt >= 0 ? 'Money in' : 'Spend'));
           if (amt < 0 && e.fund && aside[e.fund] !== undefined) aside[e.fund] = Math.max(0, aside[e.fund] + amt);   // paid from a set-aside: it's released
         }
+        let contrib = 0, payroll = 0;
+        grow.forEach((g, k) => { vals[k] *= g.g; if (A.invs.includes(g.i)) { const c = sfC(g.i, ym); vals[k] += c; if (sfFromSav(g.i)) contrib += c; else payroll += c; } });
+        const extra = sfX(ym) + X; xv = xv * xG + extra;
         const interest = cash > 0 ? cash * (Math.pow(1 + cashRate / 100, 1 / 12) - 1) : 0;
-        cash += sav + bonus - fromPay - X + ev + interest;
-        inv = inv * Math.pow(1 + invRet / 100, 1 / 12) + fromPay + payroll + X;
-        const setA = Object.values(aside).reduce((a, b) => a + b, 0), target = months * ess * grow + setA;
-        rows.push({ t, ym, sav, bonus, invest: fromPay + X, payroll, ev, evNames, interest, cash: cash - setA, cashAll: cash, setA, target: target - setA, inv, over: has(SF.over[ym]), cover: (ess * grow) ? Math.max(0, cash - setA) / (ess * grow) : null });
+        cash += sav + bonus - contrib - extra + ev + interest;
+        const setA = Object.values(aside).reduce((a, b) => a + b, 0), target = months * ess * gI;
+        rows.push({ t, ym, sav, bonus, contrib, payroll, extra, invest: contrib + extra, ev, evNames, interest, cash: cash - setA, cashAll: cash, setA, target, inv: invSum(vals, xv), comp: compOf(vals, xv, cash), over: has(SF.over[ym]), cover: (ess * gI) ? Math.max(0, cash - setA) / (ess * gI) : null });
       }
       return rows;
     };
@@ -3639,13 +3664,16 @@
       }
     } else if (slack0 >= 0) {
       const L = Math.max(0, Math.floor(slackMin / 100) * 100);
-      rec = { X: 0, L, rows: run(0, L) };
+      if (L > 0) rec = { X: 0, L, rows: run(0, L) };
     }
+    // short of target somewhere: the steady monthly cut in investing (or extra saving) that keeps cash at target from now on
+    let need = 0; for (const r of plan) need = Math.max(need, (r.target - r.cash) / r.t); need = Math.ceil(need / 50) * 50;
     const reach = slack0 < 0 ? plan.find(r => r.cash >= r.target) : null;
     const bonusT = plan.reduce((a, r) => a + r.bonus, 0), savT = plan.reduce((a, r) => a + r.sav, 0);
     const any = (Number(SF.savings) || 0) > 0 || bonusT > 0 || plan.some(r => r.over && r.sav > 0);
     const noFx = expView().filter(e => e.noFx).length;
-    return { plan, rec, cash0: free0, cashAll0: cash0, target0, slack0, ess, noFx, months, fromPay, payroll, inv0, invRet, cashRate, sp, reach, bonusT, savT, any, asidesT };
+    const fromPay = plan[0].contrib, payroll = plan[0].payroll;
+    return { plan, rec, need, cash0: free0, cashAll0: cash0, target0, slack0, ess, noFx, months, fromPay, payroll, inv0: invSum(grow.map(g => g.i.value), 0), comp0: compOf(grow.map(g => g.i.value), 0, cash0), cashRate, sp, reach, bonusT, savT, any, asidesT, A, xB, run };
   }
   function sfChart(chart, tip, rows, lines, labels) {
     [...chart.querySelectorAll('svg')].forEach(n => n.remove()); tip.hidden = true;
@@ -3725,6 +3753,141 @@
       box.append(cell);
     }
   }
+  // investment contributions: one row per holding (plus Extra investing), a cell per month; blank = the regular amount
+  function renderSfContrib(Mo) {
+    const tbl = $('sfCGrid'); tbl.textContent = '';
+    const yms = Array.from({ length: SF_N }, (_, k) => ymAdd(k + 1));
+    const hr = document.createElement('tr');
+    for (const [t, cls] of [['Holding', 'sf-c-name'], ['Every month', 'sf-c-base']]) { const th = document.createElement('th'); th.textContent = t; th.className = cls; hr.append(th); }
+    for (const ym of yms) { const th = document.createElement('th'); th.textContent = ymLabel(ym); hr.append(th); }
+    const th = document.createElement('thead'); th.append(hr); tbl.append(th);
+    const tb = document.createElement('tbody');
+    const num = (val, ph, label, on, cls = '') => { const i = document.createElement('input'); i.type = 'number'; i.min = '0'; i.step = 'any'; i.inputMode = 'decimal'; i.value = val; i.placeholder = ph; i.className = cls; i.setAttribute('aria-label', label); i.onchange = () => on(i); return i; };
+    const row = (name, sub, baseVal, basePh, cellVal, onBase, onCell, cls) => {
+      const tr = document.createElement('tr'); if (cls) tr.className = cls;
+      const n = document.createElement('th'); n.className = 'sf-c-name'; n.scope = 'row'; const d = document.createElement('div'); d.textContent = name; n.append(d);
+      if (sub) { const s = document.createElement('div'); s.className = 'hint'; if (sub instanceof Node) s.append(sub); else s.textContent = sub; n.append(s); } tr.append(n);
+      const b = document.createElement('td'); b.className = 'sf-c-base';
+      const bi = num(baseVal, basePh, `${name}: every month`, i => { onBase(i.value); savePrefs(); [...tr.querySelectorAll('td.sf-c-m input')].forEach(c => { c.placeholder = String(Math.round(Number(i.value === '' ? basePh : i.value) || 0)); }); renderSf(false); });
+      b.append(bi); tr.append(b);
+      yms.forEach(ym => { const td = document.createElement('td'); td.className = 'sf-c-m'; const v = cellVal(ym);
+        td.append(num(v === null ? '' : v, String(Math.round(Number(baseVal === '' ? basePh : baseVal) || 0)), `${name}: ${ymLabel(ym)}`, i => { onCell(ym, i.value); savePrefs(); td.classList.toggle('ov', i.value !== ''); renderSf(false); }));
+        if (v !== null) td.classList.add('ov'); tr.append(td); });
+      tb.append(tr);
+    };
+    for (const i of Mo.A.rows) {
+      const o = SF.cOver[i.id] || {}, locked = liquidityOf(i) === 'locked';
+      row(i.name, `${mainBucket(i)}${locked ? (SF.retTake ? ' · retirement, from savings' : ' · retirement, payroll') : ''}${(Number(i.monthly) || 0) > 0 ? ` · Airtable ${fmt(i.monthly)}/mo` : ''}`,
+        has(SF.cBase[i.id]) ? SF.cBase[i.id] : '', String(Math.round(Number(i.monthly) || 0)), ym => has(o[ym]) ? o[ym] : null,
+        v => { if (v === '') delete SF.cBase[i.id]; else SF.cBase[i.id] = Math.max(0, Number(v) || 0); },
+        (ym, v) => { const m = SF.cOver[i.id] = SF.cOver[i.id] || {}; if (v === '') delete m[ym]; else m[ym] = Math.max(0, Number(v) || 0); if (!Object.keys(m).length) delete SF.cOver[i.id]; }, locked && !SF.retTake ? 'payroll' : '');
+    }
+    const sel = document.createElement('select'); sel.className = 'sf-x-bucket'; sel.setAttribute('aria-label', 'Extra investing goes into');
+    for (const b of BUCKETS.filter(b => !['Cash', 'Property'].includes(b))) { const o = document.createElement('option'); o.value = b; o.textContent = 'into ' + b.toLowerCase(); sel.append(o); }
+    sel.value = SF.extra.bucket; sel.onchange = () => { SF.extra.bucket = sel.value; savePrefs(); renderSf(false); };
+    row('Extra investing', sel, has(SF.extra.base) && SF.extra.base !== null ? SF.extra.base : '', '0', ym => has(SF.extra.over[ym]) ? SF.extra.over[ym] : null,
+      v => { SF.extra.base = v === '' ? null : Math.max(0, Number(v) || 0); }, (ym, v) => { if (v === '') delete SF.extra.over[ym]; else SF.extra.over[ym] = Math.max(0, Number(v) || 0); }, 'extra');
+    tbl.append(tb);
+    const tf = document.createElement('tfoot');
+    for (const [label, key] of [['From savings', 'fromSav'], ['Through payroll', 'payroll']]) {
+      const tr = document.createElement('tr'); const h = document.createElement('th'); h.className = 'sf-c-name'; h.scope = 'row'; h.textContent = label; tr.append(h);
+      const b = document.createElement('td'); b.className = 'sf-c-base'; b.dataset.k = key; tr.append(b);
+      yms.forEach((_, k) => { const td = document.createElement('td'); td.dataset.k = key; td.dataset.t = k; tr.append(td); }); tf.append(tr);
+    }
+    tbl.append(tf);
+    // add a holding that has no contribution yet
+    const add = $('sfCAdd'); add.textContent = '';
+    const o0 = document.createElement('option'); o0.value = ''; o0.textContent = '+ Add a contribution to another holding…'; add.append(o0);
+    for (const i of Mo.A.invs.filter(i => !Mo.A.rows.includes(i))) { const o = document.createElement('option'); o.value = i.id; o.textContent = i.name; add.append(o); }
+    add.hidden = add.options.length < 2;
+  }
+  function sfContribTotals(Mo) {
+    const tf = $('sfCGrid').querySelector('tfoot'); if (!tf) return;
+    for (const td of tf.querySelectorAll('td')) {
+      const k = td.dataset.k, t = td.dataset.t;
+      const v = t === undefined ? (k === 'fromSav' ? Mo.A.rows.filter(sfFromSav).reduce((a, i) => a + sfCBase(i), 0) + sfXBase() : Mo.A.rows.filter(i => !sfFromSav(i)).reduce((a, i) => a + sfCBase(i), 0))
+        : (k === 'fromSav' ? Mo.plan[t].invest : Mo.plan[t].payroll);
+      td.textContent = v > 0.5 ? fmt(v) : '—';
+    }
+    $('sfCReset').hidden = !Object.keys(SF.cOver).length && !Object.keys(SF.cBase).length && !Object.keys(SF.extra.over).length && !sfXBase();
+  }
+  // stacked area of the whole portfolio by asset class, in $ or as % of total
+  function sfCompChart(Mo) {
+    const chart = $('sfChart2'), tip = $('sfTip2'); [...chart.querySelectorAll('svg')].forEach(n => n.remove()); tip.hidden = true;
+    const pts = [Mo.comp0, ...Mo.plan.map(r => r.comp)], labels = ['Now', ...Mo.plan.map(r => ymLabel(r.ym))];
+    const bks = BUCKETS.filter(b => pts.some(p => p[b] > 0.5)), pct = SF.comp !== 'usd';
+    const tot = pts.map(p => bks.reduce((a, b) => a + p[b], 0));
+    const W = Math.max(300, Math.round(chart.clientWidth || 640)), narrow = W < 520, H = narrow ? 210 : 250, L = narrow ? 48 : 58, R = 12, T = 10, B = 24, pw = W - L - R, ph = H - T - B;
+    let hi = pct ? 100 : Math.max(1, ...tot), step = pct ? 25 : niceStep(hi); if (!pct) hi = Math.ceil(hi / step) * step;
+    const n = pts.length - 1, x = i => L + i / n * pw, y = v => T + (1 - v / hi) * ph, val = (i, b) => pct ? (tot[i] ? pts[i][b] / tot[i] * 100 : 0) : pts[i][b];
+    const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: 'img', 'aria-label': `Portfolio by asset class over ${n} months; the table below lists the shares.` });
+    for (let v = 0; v <= hi + 1e-9; v += step) { el('line', { class: 'grid', x1: L, x2: L + pw, y1: y(v), y2: y(v) }, svg); el('text', { class: 'axis-t', x: L - 8, y: y(v) + 4, 'text-anchor': 'end' }, svg).textContent = pct ? v + '%' : fmtShort(v); }
+    for (let i = 0; i <= n; i += narrow ? 6 : 3) el('text', { class: 'axis-t', x: x(i), y: H - 6, 'text-anchor': i === 0 ? 'start' : i === n ? 'end' : 'middle' }, svg).textContent = labels[i];
+    const base = pts.map(() => 0);
+    for (const b of bks) {
+      const top = pts.map((_, i) => base[i] + val(i, b));
+      const d = top.map((v, i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(v).toFixed(1)).join(' ') + ' ' + base.map((v, i) => [i, v]).reverse().map(([i, v]) => 'L' + x(i).toFixed(1) + ' ' + y(v).toFixed(1)).join(' ') + ' Z';
+      el('path', { class: 'a-bk a-bk' + BUCKETS.indexOf(b), d }, svg); top.forEach((v, i) => { base[i] = v; });
+    }
+    const cross = el('line', { class: 'cross', y1: T, y2: T + ph, visibility: 'hidden' }, svg);
+    const hit = el('rect', { x: L, y: T, width: pw, height: ph, fill: 'transparent' }, svg);
+    const show = evt => {
+      const r = svg.getBoundingClientRect(), i = Math.max(0, Math.min(n, Math.round(((evt.clientX - r.left) * W / r.width - L) / pw * n)));
+      cross.setAttribute('x1', x(i)); cross.setAttribute('x2', x(i)); cross.setAttribute('visibility', 'visible');
+      tip.textContent = ''; const h = document.createElement('div'); h.textContent = `${labels[i]} · ${fmt(tot[i])}`; tip.append(h);
+      for (const b of [...bks].reverse()) { const d = document.createElement('div'); const sw = document.createElement('i'); sw.className = 'sw bk-' + BUCKETS.indexOf(b); const v = document.createElement('b'); v.textContent = `${(tot[i] ? pts[i][b] / tot[i] * 100 : 0).toFixed(1)}%`; d.append(sw, `${b} ${fmtShort(pts[i][b])} `, v); tip.append(d); }
+      tip.hidden = false; const left = x(i) / W * r.width; tip.style.left = Math.min(Math.max(0, left - tip.offsetWidth / 2), r.width - tip.offsetWidth) + 'px';
+    };
+    hit.addEventListener('pointermove', show); hit.addEventListener('pointerdown', show); hit.addEventListener('pointerleave', () => { cross.setAttribute('visibility', 'hidden'); tip.hidden = true; });
+    chart.prepend(svg);
+    const lg = $('sfLegend2'); lg.textContent = ''; for (const b of bks) { const s = document.createElement('span'); const i = document.createElement('i'); i.className = 'sw bk-' + BUCKETS.indexOf(b); s.append(i, b); lg.append(s); }
+    // table: share at now, 6, 12, 18, 24 months
+    const cols = [0, 6, 12, 18, 24], ct = $('sfCompTable'); ct.textContent = '';
+    const hr = document.createElement('tr'); ['Asset class', ...cols.map(c => labels[c]), 'Change'].forEach(t => { const th = document.createElement('th'); th.textContent = t; hr.append(th); });
+    const thd = document.createElement('thead'); thd.append(hr); ct.append(thd); const tb = document.createElement('tbody');
+    for (const b of bks) {
+      const tr = document.createElement('tr'), sh = c => tot[c] ? pts[c][b] / tot[c] * 100 : 0;
+      const h = document.createElement('td'); const sw = document.createElement('i'); sw.className = 'sc-dot bk-' + BUCKETS.indexOf(b); h.append(sw, b); tr.append(h);
+      for (const c of cols) { const td = document.createElement('td'); td.textContent = sh(c).toFixed(1) + '%'; td.title = fmt(pts[c][b]); tr.append(td); }
+      const d = sh(24) - sh(0), td = document.createElement('td'); td.textContent = Math.abs(d) < 0.05 ? '—' : `${d > 0 ? '+' : '−'}${Math.abs(d).toFixed(1)} pts`; td.className = Math.abs(d) >= 2 ? 'big' : ''; tr.append(td); tb.append(tr);
+    }
+    const trT = document.createElement('tr'); trT.className = 'sc-sum'; const h0 = document.createElement('td'); h0.textContent = 'Total assets'; trT.append(h0);
+    for (const c of cols) { const td = document.createElement('td'); td.textContent = fmtShort(tot[c]); trT.append(td); }
+    const tdc = document.createElement('td'); tdc.textContent = (tot[24] >= tot[0] ? '+' : '−') + fmtShort(Math.abs(tot[24] - tot[0])); trT.append(tdc); tb.append(trT);
+    ct.append(tb);
+    const cm = $('sfCompMode'); cm.textContent = '';
+    for (const [k, t] of [['pct', '% of total'], ['usd', 'Dollars']]) { const b = document.createElement('button'); b.type = 'button'; b.className = 'chip' + ((pct ? 'pct' : 'usd') === k ? ' on' : ''); b.textContent = t; b.setAttribute('aria-pressed', String((pct ? 'pct' : 'usd') === k)); b.onclick = () => { SF.comp = k; savePrefs(); sfCompChart(sfModel()); }; cm.append(b); }
+  }
+  // the cash decision: too much cash building up, about right, or not enough
+  function renderSfDecide(Mo, none) {
+    const box = $('sfDecide'); box.textContent = ''; box.className = 'sf-decide'; if (none) { box.hidden = true; return; } box.hidden = false;
+    const end = Mo.plan[SF_N - 1], low = Mo.plan.reduce((a, r) => r.cash - r.target < a.cash - a.target ? r : a, Mo.plan[0]);
+    const p = (h, t) => { const d = document.createElement('div'); d.className = 'sf-d-h'; d.textContent = h; box.append(d); if (t) { const q = document.createElement('p'); q.textContent = t; box.append(q); } };
+    const acts = document.createElement('div'); acts.className = 'mv-actions';
+    const btn = (t, on, primary) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'btn' + (primary ? ' primary' : ''); b.textContent = t; b.onclick = on; acts.append(b); };
+    const months = end.cover;
+    // starting below target but back on track within the forecast, with no dip after that: building up, not short
+    const ri = Mo.reach ? Mo.plan.indexOf(Mo.reach) : -1, dipAfter = ri >= 0 && Mo.plan.slice(ri).some(r => r.cash < r.target);
+    if (Mo.slack0 < 0 && ri >= 0 && !dipAfter) {
+      box.classList.add('short');
+      p(`Building back up: ${fmt(-Mo.slack0)} below target now`, `On this plan the emergency fund is back to ${Mo.months} months of cover in ${ymLabel(Mo.reach.ym)}. Hold off on extra investing until then` + (sfXBase() > 0 ? `; your ${fmt(sfXBase())}/month of extra investing is slowing that down.` : '.'));
+      if (sfXBase() > 0) btn('Pause extra investing until then', () => { for (let t = 1; t <= ri + 1; t++) SF.extra.over[ymAdd(t)] = 0; savePrefs(); renderSf(); }, true);
+    } else if (low.cash < low.target) {
+      box.classList.add('short');
+      p(`Not enough cash: ${fmt(low.target - low.cash)} short in ${ymLabel(low.ym)}`, `To stay at ${Mo.months} months of cover every month, save about ${fmt(Mo.need)}/month more, or invest that much less.` + (sfXBase() > 0 ? ` Your extra investing (${fmt(sfXBase())}/month) is the easiest lever.` : ''));
+      if (sfXBase() > 0) btn(`Cut extra investing by ${fmt(Math.min(sfXBase(), Mo.need))}/month`, () => { SF.extra.base = Math.max(0, sfXBase() - Mo.need); savePrefs(); renderSf(); }, true);
+    } else if (Mo.rec && (Mo.rec.X >= 100 || Mo.rec.L >= 1000)) {
+      box.classList.add('surplus');
+      p(`More cash than you need: ${fmt(end.cash - end.target)} above target by ${ymLabel(end.ym)}`, `On this plan cash ends at ${fmt(end.cash)}${months !== null ? ` (${fmtMonths(months)} months of cover vs ${Mo.months})` : ''}. You could invest an extra ${fmt(Mo.rec.X)}/month${Mo.rec.L > 0 ? ` plus ${fmt(Mo.rec.L)} now` : ''} into ${Mo.xB.toLowerCase()} and still never drop below target.` + (Mo.rec.after ? ` From ${ymLabel(Mo.rec.after.ym)} you could go up to ${fmt(Mo.rec.X + Mo.rec.after.extra)}/month.` : ''));
+      const apply = (x, l) => { const m1 = ymAdd(1), first = sfX(m1); SF.extra.base = sfXBase() + x; if (l > 0) SF.extra.over[m1] = first + x + l; savePrefs(); renderSf(); };
+      btn(`Invest ${fmt(Mo.rec.X)}/month more${Mo.rec.L > 0 ? ` + ${fmt(Mo.rec.L)} now` : ''}`, () => apply(Mo.rec.X, Mo.rec.L), true);
+      if (Mo.rec.X >= 200) btn(`Half: ${fmt(Math.floor(Mo.rec.X / 100) * 50)}/month`, () => apply(Math.floor(Mo.rec.X / 100) * 50, 0));
+    } else {
+      box.classList.add('ok');
+      p('About right', `Cash stays at or above ${Mo.months} months of cover throughout, with ${fmt(low.cash - low.target)} to spare at the tightest point (${ymLabel(low.ym)}), so there’s little room to invest more without dipping below target.`);
+    }
+    if (acts.children.length) box.append(acts);
+  }
   function renderSf(rebuild = true) {
     if (mode === 'locked') return;
     const Mo = sfModel();
@@ -3739,60 +3902,52 @@
     const bs = $('sfBasis'); bs.textContent = '';
     for (const [k, t, v] of [['all', 'All living expenses', Mo.sp.all], ['ess', 'Essentials only', Mo.sp.ess]]) { const o = document.createElement('option'); o.value = k; o.textContent = `${t} (${fmt(v)}/mo)`; bs.append(o); }
     bs.value = SF.basis === 'ess' ? 'ess' : 'all';
-    const none = !Mo.any;
-    const modeBox = $('sfMode'); modeBox.textContent = '';
-    if (!Mo.rec && SF.mode === 'rec') SF.mode = 'plan';
-    for (const [k, label] of [['plan', 'Your current plan'], ['rec', 'With recommended investing']]) {
-      const b = document.createElement('button'); b.type = 'button'; b.className = 'chip' + (SF.mode === k ? ' on' : ''); b.textContent = label; b.setAttribute('aria-pressed', String(SF.mode === k));
-      if (k === 'rec' && (!Mo.rec || none)) { b.disabled = true; b.title = none ? 'Enter your regular savings first' : 'Your cash is below target, so there’s nothing extra to invest yet'; }
-      b.onclick = () => { SF.mode = k; savePrefs(); renderSf(false); }; modeBox.append(b);
-    }
-    const rows = SF.mode === 'rec' && Mo.rec ? Mo.rec.rows : Mo.plan;
-    const low = rows.reduce((a, r) => r.cash - r.target < a.cash - a.target ? r : a, rows[0]);
+    const none = !Mo.any, rows = Mo.plan;
+    const low = rows.reduce((a, r) => r.cash - r.target < a.cash - a.target ? r : a, rows[0]), endP = rows[SF_N - 1];
     $('sfLow').textContent = none ? '—' : `${low.cover === null ? fmtShort(low.cash) : fmtMonths(low.cover) + ' mo'}`;
     $('sfLowSub').textContent = none ? 'Enter your regular savings to forecast.' : `${ymLabel(low.ym)}: ${fmt(low.cash)} emergency fund vs ${fmt(low.target)} target${low.evNames.length ? ` (${low.evNames.join(', ')})` : ''}.`;
     $('sfLow').classList.toggle('neg', !none && low.cash < low.target);
-    if (none) { $('sfRec').textContent = '—'; $('sfRecSub').textContent = ''; }
-    else if (Mo.rec) { $('sfRec').textContent = `${fmt(Mo.rec.X)}/mo`; $('sfRecSub').textContent = `${Mo.rec.L > 0 ? `plus ${fmt(Mo.rec.L)} now, ` : ''}on top of the ${fmt(Mo.fromPay)}/month you already invest, while never dropping below the target.` + (Mo.rec.after ? ` From ${ymLabel(Mo.rec.after.ym)} you could raise it to ${fmt(Mo.rec.X + Mo.rec.after.extra)}/month.` : ''); }
-    else { $('sfRec').textContent = '$0'; $('sfRecSub').textContent = Mo.reach ? `Build cash first: at your current plan you reach the target in ${ymLabel(Mo.reach.ym)}.` : `Build cash first: you’re ${fmt(-Mo.slack0)} below target and the forecast doesn’t get there in 24 months.`; }
-    const planLow = Mo.plan.reduce((a, r) => r.cash - r.target < a.cash - a.target ? r : a, Mo.plan[0]), endP = Mo.plan[SF_N - 1];
+    $('sfEnd').textContent = none ? '—' : fmtShort(endP.cash); $('sfEnd').classList.toggle('neg', !none && endP.cash < endP.target);
+    $('sfEndSub').textContent = none ? '' : `emergency fund in ${ymLabel(endP.ym)} vs ${fmt(endP.target)} target (${endP.cash >= endP.target ? fmt(endP.cash - endP.target) + ' above' : fmt(endP.target - endP.cash) + ' below'}); investments ${fmt(Mo.inv0)} → ${fmt(endP.inv)}.`;
     const base = Number(SF.savings) || 0, toCash = base - Mo.fromPay;
     $('sfVerdict').textContent = none ? 'Enter what you save each month (what’s left after spending and bills) and any bonuses to forecast your cash and investments for the next 24 months.'
       : `You save about ${fmt(base)}/month${Mo.bonusT > 0.5 ? ` plus ${fmt(Mo.bonusT)} in bonuses over the next 24 months` : ''}. ` +
-        (Mo.fromPay > 0.5 ? `${fmt(Mo.fromPay)}/month of that already goes into investments automatically, so ${toCash >= 0 ? `about ${fmt(toCash)}/month builds cash` : `cash shrinks by about ${fmt(-toCash)}/month between bonuses`}. ` : '') +
-        (Mo.slack0 < 0 ? `Your emergency fund is ${fmt(-Mo.slack0)} below target. ` : planLow.cash < planLow.target ? `On your current plan cash dips below target in ${ymLabel(planLow.ym)}. ` : '') +
-        (Mo.rec && Mo.rec.X + Mo.rec.L > 0 ? `You could invest an extra ${fmt(Mo.rec.X)}/month${Mo.rec.L > 0 ? ` and ${fmt(Mo.rec.L)} now` : ''} and still keep ${Mo.months} months of cover in every month.` : endP.cash > endP.target ? `Cash ends at ${fmt(endP.cash)} vs ${fmt(endP.target)} target.` : '');
-    // savings & bonuses: bars + grid
+        (Mo.fromPay > 0.5 ? `${fmt(Mo.fromPay)}/month of that goes into investments, so ${toCash >= 0 ? `about ${fmt(toCash)}/month builds cash` : `cash shrinks by about ${fmt(-toCash)}/month between bonuses`}. ` : '') +
+        (Mo.payroll > 0.5 ? `Another ${fmt(Mo.payroll)}/month goes into retirement accounts through payroll. ` : '') +
+        (Mo.slack0 < 0 ? `Your emergency fund is ${fmt(-Mo.slack0)} below target now${Mo.reach ? `; on this plan it reaches the target in ${ymLabel(Mo.reach.ym)}` : ' and this plan doesn’t get it there in 24 months'}. ` : '') +
+        `Over 24 months: ${fmt(rows.reduce((a, r) => a + r.invest + r.payroll, 0))} invested, emergency fund ${fmt(Mo.cash0)} → ${fmt(endP.cash)}.`;
+    renderSfDecide(Mo, none);
+    // savings & bonuses
     $('sfFlowSub').textContent = `${fmt(Mo.savT)} of savings and ${fmt(Mo.bonusT)} of bonuses over 24 months. Type in a month to change it; leave Savings blank to use your regular amount${Number(SF.raise) ? ` (growing ${SF.raise}% a year)` : ''}.`;
     $('sfReset').hidden = !Object.keys(SF.over).some(k => k >= ymAdd(1));
     sfFlowChart(Mo.plan);
     if (rebuild || !$('sfGrid').querySelector('.sf-cell')) renderSfGrid();
-    // cash and investment charts
+    // contributions
+    if (rebuild || !$('sfCGrid').querySelector('tbody tr')) renderSfContrib(Mo);
+    sfContribTotals(Mo);
+    $('sfCSub').textContent = `Monthly contributions from Airtable, ${fmt(rows[0].invest + rows[0].payroll)} next month in total. Change a holding for every month, or type in a specific month (a blank cell uses the every-month amount; an edited one is outlined). Changes here are for the forecast only; edit the holding to change Airtable.`;
+    // cash chart
     const labels = ['Now', ...rows.map(r => ymLabel(r.ym))];
-    const lines1 = [{ label: SF.mode === 'rec' ? 'Emergency fund (with investing)' : 'Emergency fund', cls: 'l-cash', sw: 'sw-cash', pts: [SF.mode === 'rec' && Mo.rec ? Mo.cash0 - Mo.rec.L : Mo.cash0, ...rows.map(r => r.cash)] }, { label: 'Target', cls: 'l-tgt', sw: 'sw-tgt', pts: [Mo.target0, ...rows.map(r => r.target)] }];
-    if (SF.mode === 'rec' && Mo.rec) lines1.push({ label: 'Emergency fund (current plan)', cls: 'l-cash2', sw: 'sw-dot', pts: [Mo.cash0, ...Mo.plan.map(r => r.cash)] });
+    const lines1 = [{ label: 'Emergency fund', cls: 'l-cash', sw: 'sw-cash', pts: [Mo.cash0, ...rows.map(r => r.cash)] }, { label: 'Target', cls: 'l-tgt', sw: 'sw-tgt', pts: [Mo.target0, ...rows.map(r => r.target)] }];
+    if (Mo.rec && Mo.rec.X + Mo.rec.L > 0) lines1.push({ label: 'If you invested the surplus', cls: 'l-cash2', sw: 'sw-dot', pts: [Mo.cash0 - Mo.rec.L, ...Mo.rec.rows.map(r => r.cash)] });
     const lg1 = $('sfLegend1'); lg1.textContent = ''; for (const l of lines1) { const s = document.createElement('span'); const i = document.createElement('i'); i.className = 'sw ' + l.sw; s.append(i, l.label); lg1.append(s); }
-    const lines2 = [{ label: SF.mode === 'rec' ? 'Investments (with investing)' : 'Investments', cls: 'l-inv', sw: 'sw-inv', pts: [SF.mode === 'rec' && Mo.rec ? Mo.inv0 + Mo.rec.L : Mo.inv0, ...rows.map(r => r.inv)] }];
-    if (SF.mode === 'rec' && Mo.rec) lines2.push({ label: 'Investments (current plan)', cls: 'l-inv2', sw: 'sw-dot', pts: [Mo.inv0, ...Mo.plan.map(r => r.inv)] });
-    const lg2 = $('sfLegend2'); lg2.textContent = ''; for (const l of lines2) { const s = document.createElement('span'); const i = document.createElement('i'); i.className = 'sw ' + l.sw; s.append(i, l.label); lg2.append(s); }
-    if (none) { [$('sfChart1'), $('sfChart2')].forEach(c => [...c.querySelectorAll('svg')].forEach(n => n.remove())); }
-    else { sfChart($('sfChart1'), $('sfTip1'), rows, lines1, labels); sfChart($('sfChart2'), $('sfTip2'), rows, lines2, labels); }
+    if (none) [...$('sfChart1').querySelectorAll('svg')].forEach(n => n.remove()); else sfChart($('sfChart1'), $('sfTip1'), rows, lines1, labels);
+    sfCompChart(Mo);
     if (rebuild || !$('sfEvents').querySelector('.sf-ev')) renderSfEvents();
     // table
     const tbl = $('sfTable'); tbl.textContent = '';
-    const hr = document.createElement('tr'); ['Month', 'Savings', 'Bonus', 'To investments', 'One-offs', 'Interest', 'Emergency fund', 'Target', 'Cover', 'Set aside'].forEach(t => { const th = document.createElement('th'); th.textContent = t; hr.append(th); });
+    const hr = document.createElement('tr'); ['Month', 'Savings', 'Bonus', 'To investments', 'One-offs', 'Interest', 'Emergency fund', 'Target', 'Cover', 'Set aside', 'Investments'].forEach(t => { const th = document.createElement('th'); th.textContent = t; hr.append(th); });
     const th = document.createElement('thead'); th.append(hr); tbl.append(th);
     const tb = document.createElement('tbody');
     if (!none) for (const r of rows) {
       const tr = document.createElement('tr'); if (r.ev || r.bonus) tr.className = 'sf-ev-row';
-      const cells = [ymLabel(r.ym), (r.sav < 0 ? '−' : '+') + fmtShort(Math.abs(r.sav)) + (r.over ? '*' : ''), r.bonus ? '+' + fmtShort(r.bonus) : '—', r.invest > 0.5 ? '−' + fmtShort(r.invest) : '—', r.ev ? (r.ev > 0 ? '+' : '−') + fmtShort(Math.abs(r.ev)) : '—', '+' + fmtShort(r.interest), fmtShort(r.cash), fmtShort(r.target), r.cover === null ? '—' : fmtMonths(r.cover) + ' mo', r.setA > 0.5 ? fmtShort(r.setA) : '—'];
+      const cells = [ymLabel(r.ym), (r.sav < 0 ? '−' : '+') + fmtShort(Math.abs(r.sav)) + (r.over ? '*' : ''), r.bonus ? '+' + fmtShort(r.bonus) : '—', r.invest > 0.5 ? '−' + fmtShort(r.invest) : '—', r.ev ? (r.ev > 0 ? '+' : '−') + fmtShort(Math.abs(r.ev)) : '—', '+' + fmtShort(r.interest), fmtShort(r.cash), fmtShort(r.target), r.cover === null ? '—' : fmtMonths(r.cover) + ' mo', r.setA > 0.5 ? fmtShort(r.setA) : '—', fmtShort(r.inv)];
       cells.forEach((t, k) => { const td = document.createElement('td'); td.textContent = t; if (k === 4 && r.evNames.length) td.title = r.evNames.join(', '); if (k === 6 && r.cash < 0) td.className = 'neg'; else if ((k === 6 || k === 8) && r.cash < r.target) td.className = 'low'; tr.append(td); });
       tb.append(tr);
     }
     tbl.append(tb);
     $('sfNote').textContent = `Regular savings is what’s left each month after spending and bills (* = a month you edited). The target is ${Mo.months} months of ${spLabel} (${fmt(Mo.ess)}/month from your Monthly living expenses list), growing with ${P.infl}% inflation. The emergency fund is your emergency-fund holdings${Mo.asidesT > 0.5 ? ` minus cash set aside for goals (${fmt(Mo.asidesT)} now; a set-aside is released when a one-off is paid from it)` : ''}; cash earns ${Mo.cashRate.toFixed(1)}%/yr. ` +
-      `Automatic investments (${fmt(Mo.fromPay)}/month, from each holding’s monthly contribution) come out of your savings${Mo.payroll > 0.5 ? `; ${fmt(Mo.payroll)}/month into retirement accounts is treated as a payroll deduction${SF.retTake ? '' : ' and isn’t taken from savings'}` : ''}. ` +
-      `Investments start at ${fmt(Mo.inv0)} and grow at ${Mo.invRet.toFixed(1)}%/yr. Everything here is saved in this browser.`;
+      `Contributions to taxable accounts come out of savings${Mo.A.rows.some(i => liquidityOf(i) === 'locked') ? (SF.retTake ? ', and so do retirement contributions (box ticked)' : '; retirement contributions are treated as payroll deductions') : ''}. Every holding grows at its expected return (Expected return % in Airtable, or the asset-class assumption), and the portfolio chart includes everything you own, property too. Everything here is saved in this browser.`;
   }
   function renderSfEvents() {
     const box = $('sfEvents');
@@ -3817,6 +3972,8 @@
     });
   }
   $('sfAdd').onclick = () => { SF.events.push({ name: '', month: ymAdd(3), dir: 'out', amount: 0, fund: '' }); savePrefs(); renderSf(); const ins = $('sfEvents').querySelectorAll('.sf-name'); if (ins.length) ins[ins.length - 1].focus(); };
+  $('sfCAdd').onchange = () => { const id = $('sfCAdd').value; if (id && !SF.cRows.includes(id)) SF.cRows.push(id); savePrefs(); renderSf(); };
+  $('sfCReset').onclick = () => { SF.cOver = {}; SF.cBase = {}; SF.extra.over = {}; SF.extra.base = null; savePrefs(); renderSf(); };
   $('sfReset').onclick = () => { for (const k of Object.keys(SF.over)) delete SF.over[k]; savePrefs(); renderSf(); };
   for (const [id, k, lo, hi] of [['sfSavings', 'savings', -1e7, 1e8], ['sfRaise', 'raise', -20, 50], ['sfMonths', 'months', 0, 36]])
     $(id).onchange = () => { const v = $(id).value; SF[k] = v === '' ? null : clampNum(v, lo, hi, null); savePrefs(); renderSf(); };
