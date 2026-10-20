@@ -3,16 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://api.airtable.com; form-action 'none'; base-uri 'none'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src https://api.airtable.com; form-action 'none'; base-uri 'none'; object-src 'none'">
 <meta name="referrer" content="no-referrer">
 <title>Holdings</title>
-<link rel="stylesheet" href="styles.css?v=2026-10-19l">
-<script src="app.js?v=2026-10-19l" defer></script>
+<link rel="stylesheet" href="styles.css?v=2026-10-19n">
+<script src="app.js?v=2026-10-19n" defer></script>
 </head>
 <body>
 <div class="wrap">
   <header>
-    <h1>◆ <span>Holdings</span></h1>
+    <h1><span class="h1-kicker">Personal financial statement</span><span>Holdings</span></h1>
     <div class="tools">
       <button class="btn" id="connBtn" type="button"><span class="dot" id="connDot"></span><span id="connLabel">Connect Airtable</span></button>
       <select id="ownerFilter" class="btn" aria-label="Show holdings for" hidden></select>
@@ -41,7 +41,7 @@
   <p class="fx-note" id="fxNote" hidden><span id="fxText"></span> <button type="button" class="link-btn" id="fxBtn">Exchange rates</button></p>
 
   <div class="card lock-card" id="lockCard" hidden>
-    <h2>🔒 Locked</h2>
+    <h2>Locked</h2>
     <p>Your data is stored in Airtable. Enter your passphrase to unlock it on this device.</p>
     <button class="btn primary" type="button" id="lockUnlockBtn">Unlock</button>
   </div>
