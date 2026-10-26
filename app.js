@@ -3604,7 +3604,8 @@
   const sfFromSav = i => SF.retTake || liquidityOf(i) !== 'locked';
   function sfAssets() {
     const vis = visible(), fund = efHoldings(), fundIds = new Set(fund.map(i => i.id));
-    const assets = vis.filter(i => i.kind === 'asset' && i.value > 0 && !i.noFx);
+    // a new account with no balance yet still counts if money is going into it
+    const assets = vis.filter(i => i.kind === 'asset' && !i.noFx && (i.value > 0 || (Number(i.monthly) || 0) > 0 || SF.cRows.includes(i.id) || has(SF.cBase[i.id]) || Object.keys(SF.cOver[i.id] || {}).length));
     const invs = assets.filter(i => !fundIds.has(i.id) && !(mainBucket(i) === 'Property' && !i.ticker) && !['Vehicles', 'Collectibles'].includes(i.category));
     const other = assets.filter(i => !fundIds.has(i.id) && !invs.includes(i));
     // rows in the contributions grid: holdings with a contribution in Airtable, or one you've added or changed here
@@ -3654,7 +3655,11 @@
     let rec = null;
     if (slack0 >= 0 && X > 0) {
       X = Math.max(0, Math.floor(X / 50) * 50);
-      const after = run(X, 0); const L = Math.max(0, Math.floor(Math.min(slack0, ...after.map(r => r.cash - r.target)) / 100) * 100);
+      // less cash also earns less interest, so confirm the rounded amounts hold every month and step down if not
+      const ok = rows => rows.every(r => r.cash >= r.target - 0.5);
+      while (X > 0 && !ok(run(X, 0))) X -= 50;
+      const after = run(X, 0); let L = Math.max(0, Math.floor(Math.min(slack0, ...after.map(r => r.cash - r.target)) / 100) * 100);
+      while (L > 0 && !ok(run(X, L))) L -= 100;
       rec = { X, L, rows: run(X, L) };
       const rr = rec.rows, tb = rr.reduce((k, r, i) => r.cash - r.target < rr[k].cash - rr[k].target ? i : k, 0);
       if (tb < rr.length - 1) {
@@ -3705,7 +3710,7 @@
     const chart = $('sfFlowChart'), tip = $('sfFlowTip'); [...chart.querySelectorAll('svg')].forEach(n => n.remove()); tip.hidden = true;
     const W = Math.max(300, Math.round(chart.clientWidth || 640)), narrow = W < 520, H = narrow ? 190 : 220, L = narrow ? 48 : 58, R = 8, T = 10, B = 24, pw = W - L - R, ph = H - T - B;
     const up = rows.map(r => r.sav + r.bonus), dn = rows.map(r => Math.min(0, r.ev) + Math.min(0, r.sav));
-    let hi = Math.max(1, ...up, ...rows.map(r => r.ev > 0 ? r.sav + r.bonus + r.ev : 0)), lo = Math.min(0, ...dn);
+    let hi = Math.max(100, ...up, ...rows.map(r => r.ev > 0 ? r.sav + r.bonus + r.ev : 0)), lo = Math.min(0, ...dn);   // at least $100 so an empty chart has a sensible axis
     const step = niceStep(hi - lo); lo = Math.floor(lo / step) * step; hi = Math.ceil(hi / step) * step;
     const n = rows.length, slot = pw / n, bw = Math.max(4, slot - 2), y = v => T + (1 - (v - lo) / (hi - lo)) * ph, x = i => L + i * slot + (slot - bw) / 2;
     const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: 'img', 'aria-label': `Savings and bonuses for the next ${n} months; the grid below lists and edits every month.` });
